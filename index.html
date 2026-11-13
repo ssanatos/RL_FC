@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="ko" class="h-full dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D High-Craft Drone Simulator</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans KR', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            background-color: #0b0f17;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glow-cyan {
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        }
+        .glow-red {
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+        /* Touch virtual joystick area */
+        .touch-area {
+            touch-action: none;
+        }
+    </style>
+</head>
+<body class="font-sans text-slate-100 antialiased h-full overflow-hidden">
+
+    <!-- 3D Render Canvas Container -->
+    <div id="canvas-container" class="w-full h-full absolute inset-0 z-0"></div>
+
+    <!-- HUD Overlay Top Bar -->
+    <div id="hud-overlay" class="relative z-10 p-4 md:p-6 pointer-events-none flex justify-between items-start w-full transition-opacity duration-300">
+        <!-- Brand & Telemetry Summary -->
+        <div class="glass-panel rounded-2xl p-4 md:p-5 pointer-events-auto shadow-2xl max-w-xs md:max-w-sm">
+            <div class="flex items-center space-x-3 mb-3">
+                <div class="w-3 h-3 rounded-full bg-cyan-400 animate-pulse glow-cyan"></div>
+                <h1 class="font-bold text-lg md:text-xl tracking-wider text-white">SKYHAWK X-1 <span class="text-xs text-cyan-400 font-mono font-normal border border-cyan-500/30 px-1.5 py-0.5 rounded ml-1">PROTOTYPE</span></h1>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+                <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/50">
+                    <span class="text-slate-400 block text-[10px] mb-0.5">고도 (ALTITUDE)</span>
+                    <span id="tele-alt" class="text-cyan-400 text-base font-bold">1.50</span> <span class="text-slate-400 text-[10px]">m</span>
+                </div>
+                <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/50">
+                    <span class="text-slate-400 block text-[10px] mb-0.5">속도 (SPEED)</span>
+                    <span id="tele-speed" class="text-emerald-400 text-base font-bold">0.00</span> <span class="text-slate-400 text-[10px]">m/s</span>
+                </div>
+                <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/50">
+                    <span class="text-slate-400 block text-[10px] mb-0.5">모터 RPM</span>
+                    <span id="tele-rpm" class="text-amber-400 text-base font-bold">7800</span> <span class="text-slate-400 text-[10px]">RPM</span>
+                </div>
+                <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/50">
+                    <span class="text-slate-400 block text-[10px] mb-0.5">배터리 (BATTERY)</span>
+                    <div class="flex items-center justify-between">
+                        <span id="tele-bat" class="text-emerald-400 text-base font-bold">98%</span>
+                        <div class="w-8 h-2.5 bg-slate-700 rounded-sm overflow-hidden p-0.5 border border-slate-600">
+                            <div id="bat-bar" class="h-full bg-emerald-400 w-[98%] transition-all"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Attitude Indicator / Pitch & Roll -->
+            <div class="mt-3 bg-slate-800/40 p-2 rounded-lg border border-slate-700/40 flex justify-around text-[11px] font-mono text-slate-300">
+                <div>PITCH: <span id="tele-pitch" class="text-slate-100 font-semibold">0.0°</span></div>
+                <div>ROLL: <span id="tele-roll" class="text-slate-100 font-semibold">0.0°</span></div>
+                <div>YAW: <span id="tele-yaw" class="text-slate-100 font-semibold">0°</span></div>
+            </div>
+        </div>
+
+        <!-- Quick Controls & View Actions -->
+        <div class="flex flex-col space-y-2 pointer-events-auto">
+            <button id="btn-cam-mode" class="glass-panel hover:bg-slate-800/80 text-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all active:scale-95 shadow-lg">
+                <i class="fa-solid fa-video text-cyan-400"></i>
+                <span id="cam-mode-text">오비트 뷰</span>
+            </button>
+
+            <button id="btn-sound" class="glass-panel hover:bg-slate-800/80 text-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all active:scale-95 shadow-lg">
+                <i id="sound-icon" class="fa-solid fa-volume-xmark text-slate-400"></i>
+                <span>엔진 사운드</span>
+            </button>
+
+            <button id="btn-lights" class="glass-panel hover:bg-slate-800/80 text-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all active:scale-95 shadow-lg">
+                <i class="fa-solid fa-lightbulb text-amber-400"></i>
+                <span>LED 조명 ON</span>
+            </button>
+
+            <button id="btn-reset" class="glass-panel hover:bg-slate-800/80 text-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all active:scale-95 shadow-lg">
+                <i class="fa-solid fa-rotate-left text-slate-400"></i>
+                <span>위치 초기화</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Bottom Controls & Key Legend Overlay -->
+    <div id="hud-bottom" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 pointer-events-none transition-opacity duration-300 w-full max-w-xl px-4">
+        <div class="glass-panel rounded-2xl p-3 md:p-4 text-center pointer-events-auto shadow-2xl">
+            <div class="hidden md:flex justify-around items-center text-xs font-mono text-slate-300">
+                <div><kbd class="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-cyan-400 font-bold">W/S</kbd> 스로틀 <kbd class="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-cyan-400 font-bold">A/D</kbd> 러더</div>
+                <div><kbd class="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-amber-400 font-bold">↑/↓</kbd> 전후진 <kbd class="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-amber-400 font-bold">←/→</kbd> 에일러론</div>
+                <div><kbd class="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white font-bold">G</kbd> 바람 <kbd class="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white font-bold">M</kbd> AI모드</div>
+            </div>
+            
+            <!-- Mobile Touch Hint -->
+            <div class="block md:hidden text-xs text-slate-300">
+                <span>마우스/터치 드래그로 360° 시점 회전 가능</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toggle UI Button (Top Right Floating) -->
+    <button id="btn-toggle-hud" class="absolute top-4 right-4 z-20 glass-panel hover:bg-slate-800 text-slate-300 p-2.5 rounded-full transition-all shadow-lg active:scale-95" title="HUD 토글 (H키)">
+        <i class="fa-solid fa-eye text-base"></i>
+    </button>
+
+    <pre id="sim-panel" class="absolute left-4 bottom-24 z-10 glass-panel rounded-xl p-3 text-[10px] leading-4 font-mono text-slate-200 pointer-events-none" style="max-width:92vw;white-space:pre-wrap"></pre>
+    <div id="sim-banner" class="absolute top-24 left-1/2 -translate-x-1/2 z-20 glass-panel rounded-xl px-5 py-3 text-sm font-bold text-red-400 glow-red" style="display:none"></div>
+    <!-- Main Simulator Script -->
+    <script>
+        // --- 1. Scene Setup & Renderer ---
+        const container = document.getElementById('canvas-container');
+        
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#0b0f17');
+        scene.fog = new THREE.FogExp2('#0b0f17', 0.012);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(2.5, 1.8, 3.2);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.15;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 + 0.05; // Slightly allow looking from below ground edge
+        controls.minDistance = 0.8;
+        controls.maxDistance = 30;
+        controls.target.set(0, 1.2, 0);
+
+        // --- 2. Procedural Carbon Fiber Texture ---
+        function generateCarbonTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = '#141518';
+            ctx.fillRect(0, 0, 128, 128);
+            
+            const size = 16;
+            for (let x = 0; x < 128; x += size) {
+                for (let y = 0; y < 128; y += size) {
+                    if ((x / size + y / size) % 2 === 0) {
+                        ctx.fillStyle = '#22242b';
+                        ctx.fillRect(x, y, size, size);
+                        ctx.fillStyle = '#1a1c22';
+                        ctx.fillRect(x + 2, y + 2, size - 4, size - 4);
+                    } else {
+                        ctx.fillStyle = '#0f1013';
+                        ctx.fillRect(x, y, size, size);
+                    }
+                }
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(6, 6);
+            return texture;
+        }
+
+        const carbonTexture = generateCarbonTexture();
+
+        // --- 3. Lighting Setup ---
+        const ambientLight = new THREE.AmbientLight('#ffffff', 0.6);
+        scene.add(ambientLight);
+
+        const mainSun = new THREE.DirectionalLight('#ffffff', 1.8);
+        mainSun.position.set(10, 20, 12);
+        mainSun.castShadow = true;
+        mainSun.shadow.mapSize.width = 2048;
+        mainSun.shadow.mapSize.height = 2048;
+        mainSun.shadow.camera.near = 0.5;
+        mainSun.shadow.camera.far = 50;
+        const d = 6;
+        mainSun.shadow.camera.left = -d;
+        mainSun.shadow.camera.right = d;
+        mainSun.shadow.camera.top = d;
+        mainSun.shadow.camera.bottom = -d;
+        mainSun.shadow.bias = -0.0003;
+        scene.add(mainSun);
+
+        const rimLight = new THREE.DirectionalLight('#38bdf8', 1.2);
+        rimLight.position.set(-10, 8, -10);
+        scene.add(rimLight);
+
+        const fillLight = new THREE.DirectionalLight('#818cf8', 0.5);
+        fillLight.position.set(0, -5, 10);
+        scene.add(fillLight);
+
+        // --- 4. Environment & Helipad Construction ---
+        const envGroup = new THREE.Group();
+        scene.add(envGroup);
+
+        // Ground Mesh
+        const groundGeo = new THREE.PlaneGeometry(150, 150);
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: 0x0d131f,
+            roughness: 0.85,
+            metalness: 0.2
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        envGroup.add(ground);
+
+        // Grid lines overlay
+        const gridHelper = new THREE.GridHelper(150, 75, 0x1e293b, 0x0f172a);
+        gridHelper.position.y = 0.001;
+        envGroup.add(gridHelper);
+
+        // High-Tech Helipad Platform
+        const padGroup = new THREE.Group();
+        envGroup.add(padGroup);
+
+        // Base Deck Base
+        const padBaseGeo = new THREE.CylinderGeometry(4.5, 4.7, 0.2, 64);
+        const padBaseMat = new THREE.MeshStandardMaterial({
+            color: 0x1e293b,
+            metalness: 0.6,
+            roughness: 0.4
+        });
+        const padBase = new THREE.Mesh(padBaseGeo, padBaseMat);
+        padBase.position.y = 0.1;
+        padBase.receiveShadow = true;
+        padBase.castShadow = true;
+        padGroup.add(padBase);
+
+        // Inner Metal Plate
+        const padInnerGeo = new THREE.CylinderGeometry(4.2, 4.2, 0.02, 64);
+        const padInnerMat = new THREE.MeshStandardMaterial({
+            color: 0x0f172a,
+            metalness: 0.8,
+            roughness: 0.3
+        });
+        const padInner = new THREE.Mesh(padInnerGeo, padInnerMat);
+        padInner.position.y = 0.21;
+        padInner.receiveShadow = true;
+        padGroup.add(padInner);
+
+        // Helipad Markings Texture / Canvas
+        function createHelipadCanvas() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            ctx.clearRect(0, 0, 512, 512);
+
+            // Outer Ring
+            ctx.strokeStyle = '#06b6d4';
+            ctx.lineWidth = 12;
+            ctx.beginPath();
+            ctx.arc(256, 256, 220, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Inner Yellow Ring
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.arc(256, 256, 170, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Center 'H'
+            ctx.fillStyle = '#06b6d4';
+            ctx.font = 'bold 160px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('H', 256, 256);
+
+            // Crosshair marks
+            ctx.strokeStyle = '#06b6d4';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(256, 20); ctx.lineTo(256, 70);
+            ctx.moveTo(256, 442); ctx.lineTo(256, 492);
+            ctx.moveTo(20, 256); ctx.lineTo(70, 256);
+            ctx.moveTo(442, 256); ctx.lineTo(492, 256);
+            ctx.stroke();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const markGeo = new THREE.PlaneGeometry(8, 8);
+        const markMat = new THREE.MeshBasicMaterial({
+            map: createHelipadCanvas(),
+            transparent: true,
+            depthWrite: false
+        });
+        const padMarkings = new THREE.Mesh(markGeo, markMat);
+        padMarkings.rotation.x = -Math.PI / 2;
+        padMarkings.position.y = 0.222;
+        padGroup.add(padMarkings);
+
+        // Helipad Perimeter Beacons (Glowing LED Lights)
+        const beaconLights = [];
+        const beaconCount = 8;
+        for (let i = 0; i < beaconCount; i++) {
+            const angle = (i / beaconCount) * Math.PI * 2;
+            const r = 4.35;
+            const bx = Math.cos(angle) * r;
+            const bz = Math.sin(angle) * r;
+
+            const postGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.25, 16);
+            const postMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 });
+            const post = new THREE.Mesh(postGeo, postMat);
+            post.position.set(bx, 0.22, bz);
+            padGroup.add(post);
+
+            const capGeo = new THREE.SphereGeometry(0.07, 16, 16);
+            const isYellow = i % 2 === 0;
+            const colorHex = isYellow ? 0xf59e0b : 0x06b6d4;
+            const capMat = new THREE.MeshBasicMaterial({ color: colorHex });
+            const cap = new THREE.Mesh(capGeo, capMat);
+            cap.position.set(bx, 0.35, bz);
+            padGroup.add(cap);
+
+            const pLight = new THREE.PointLight(colorHex, 0.8, 3);
+            pLight.position.set(bx, 0.4, bz);
+            padGroup.add(pLight);
+            beaconLights.push(pLight);
+        }
+
+        // Low Poly Distant Horizon Silhouettes
+        const mountainGroup = new THREE.Group();
+        scene.add(mountainGroup);
+        const mtnGeo = new THREE.ConeGeometry(12, 18, 5);
+        const mtnMat = new THREE.MeshStandardMaterial({ color: 0x070a12, roughness: 1.0 });
+        for (let i = 0; i < 16; i++) {
+            const ang = (i / 16) * Math.PI * 2;
+            const dist = 65 + Math.random() * 15;
+            const mtn = new THREE.Mesh(mtnGeo, mtnMat);
+            mtn.position.set(Math.cos(ang) * dist, 8, Math.sin(ang) * dist);
+            mtn.scale.set(1 + Math.random(), 0.8 + Math.random() * 0.8, 1 + Math.random());
+            mountainGroup.add(mtn);
+        }
+
+        // --- 5. High-Craft Drone Construction ---
+        const drone = new THREE.Group();
+        drone.position.set(0, 1.5, 0);
+        scene.add(drone);
+
+        // Common Materials
+        const carbonMat = new THREE.MeshStandardMaterial({
+            map: carbonTexture,
+            color: 0x22252a,
+            roughness: 0.35,
+            metalness: 0.85
+        });
+
+        const titaniumMat = new THREE.MeshStandardMaterial({
+            color: 0x475569,
+            roughness: 0.2,
+            metalness: 0.95
+        });
+
+        const darkAnodizedMat = new THREE.MeshStandardMaterial({
+            color: 0x0f172a,
+            roughness: 0.3,
+            metalness: 0.9
+        });
+
+        const copperMat = new THREE.MeshStandardMaterial({
+            color: 0xb45309,
+            roughness: 0.4,
+            metalness: 0.8
+        });
+
+        const cyanNeonMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4 });
+        const redLedMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+        const greenLedMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+        const whiteLedMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
+
+        // (A) Central Fuselage Chassis
+        const bodyGroup = new THREE.Group();
+        drone.add(bodyGroup);
+
+        // Core Body Center Frame
+        const coreGeo = new THREE.BoxGeometry(0.42, 0.14, 0.65);
+        const coreBody = new THREE.Mesh(coreGeo, carbonMat);
+        coreBody.castShadow = true;
+        coreBody.receiveShadow = true;
+        bodyGroup.add(coreBody);
+
+        // Top Aerodynamic Shell Nose / Canopy
+        const topCanopyShape = new THREE.SphereGeometry(0.24, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5);
+        const topCanopy = new THREE.Mesh(topCanopyShape, carbonMat);
+        topCanopy.scale.set(0.9, 0.45, 1.3);
+        topCanopy.position.set(0, 0.07, -0.02);
+        topCanopy.castShadow = true;
+        bodyGroup.add(topCanopy);
+
+        // Top GPS Puck Dome
+        const gpsBase = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.03, 24), titaniumMat);
+        gpsBase.position.set(0, 0.18, 0.12);
+        bodyGroup.add(gpsBase);
+
+        const gpsDome = new THREE.Mesh(new THREE.SphereGeometry(0.075, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.5), darkAnodizedMat);
+        gpsDome.position.set(0, 0.19, 0.12);
+        bodyGroup.add(gpsDome);
+
+        // GPS Status LED ring
+        const gpsRing = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.008, 12, 24), cyanNeonMat);
+        gpsRing.rotation.x = Math.PI / 2;
+        gpsRing.position.set(0, 0.195, 0.12);
+        bodyGroup.add(gpsRing);
+
+        // Rear Battery Module
+        const batGeo = new THREE.BoxGeometry(0.32, 0.13, 0.28);
+        const battery = new THREE.Mesh(batGeo, darkAnodizedMat);
+        battery.position.set(0, 0.02, 0.32);
+        battery.castShadow = true;
+        bodyGroup.add(battery);
+
+        // Battery Power Level LED Bar (4 bars)
+        for (let i = 0; i < 4; i++) {
+            const bar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.015, 0.008), greenLedMat);
+            bar.position.set(-0.09 + i * 0.06, 0.06, 0.462);
+            bodyGroup.add(bar);
+        }
+
+        // (B) Front FPV & Gimbal Camera Assembly
+        const gimbalGroup = new THREE.Group();
+        gimbalGroup.position.set(0, -0.04, -0.34);
+        bodyGroup.add(gimbalGroup);
+
+        const gRing = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.012, 16, 32), titaniumMat);
+        gimbalGroup.add(gRing);
+
+        const gHousing = new THREE.Mesh(new THREE.SphereGeometry(0.075, 24, 24), darkAnodizedMat);
+        gimbalGroup.add(gHousing);
+
+        // Camera Lens Glass & Inner Element
+        const lensGlassMat = new THREE.MeshPhysicalMaterial({
+            color: 0x0284c7,
+            metalness: 0.1,
+            roughness: 0.1,
+            transmission: 0.85,
+            ior: 1.5,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.1
+        });
+        const lensFront = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.02, 24), lensGlassMat);
+        lensFront.rotation.x = Math.PI / 2;
+        lensFront.position.set(0, 0, -0.065);
+        gimbalGroup.add(lensFront);
+
+        const lensSensor = new THREE.Mesh(new THREE.SphereGeometry(0.03, 16, 16), cyanNeonMat);
+        lensSensor.position.set(0, 0, -0.05);
+        gimbalGroup.add(lensSensor);
+
+        // (C) Quad Arms (X-Configuration)
+        const armLength = 0.95;
+        const armAngle = Math.PI / 3.2; // ~56 deg angle off longitudinal axis
+        const armPositions = [
+            { x:  Math.sin(armAngle) * armLength, z: -Math.cos(armAngle) * armLength, isFront: true,  isLeft: false }, // Front Right
+            { x: -Math.sin(armAngle) * armLength, z: -Math.cos(armAngle) * armLength, isFront: true,  isLeft: true  }, // Front Left
+            { x:  Math.sin(armAngle) * armLength, z:  Math.cos(armAngle) * armLength, isFront: false, isLeft: false }, // Rear Right
+            { x: -Math.sin(armAngle) * armLength, z:  Math.cos(armAngle) * armLength, isFront: false, isLeft: true  }  // Rear Left
+        ];
+
+        const motors = [];
+        const propBlades = [];
+        const propBlurs = [];
+
+        armPositions.forEach((pos, idx) => {
+            const armHolder = new THREE.Group();
+            bodyGroup.add(armHolder);
+
+            // Carbon Tube Arm
+            const dist = Math.hypot(pos.x, pos.z);
+            const armGeo = new THREE.CylinderGeometry(0.03, 0.04, dist, 16);
+            const armMesh = new THREE.Mesh(armGeo, carbonMat);
+            
+            armMesh.position.set(pos.x / 2, 0, pos.z / 2);
+            armMesh.rotation.z = Math.PI / 2;
+            armMesh.rotation.y = -Math.atan2(pos.z, pos.x) + Math.PI / 2;
+            armMesh.castShadow = true;
+            armHolder.add(armMesh);
+
+            // Cyan Accent Strip on Arm
+            const stripGeo = new THREE.BoxGeometry(0.012, dist * 0.7, 0.012);
+            const strip = new THREE.Mesh(stripGeo, cyanNeonMat);
+            strip.position.set(pos.x / 2, 0.022, pos.z / 2);
+            strip.rotation.z = Math.PI / 2;
+            strip.rotation.y = armMesh.rotation.y;
+            armHolder.add(strip);
+
+            // Motor Mount Base at tip
+            const mountGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.05, 24);
+            const mount = new THREE.Mesh(mountGeo, titaniumMat);
+            mount.position.set(pos.x, -0.01, pos.z);
+            mount.castShadow = true;
+            armHolder.add(mount);
+
+            // Brushless Motor Bell
+            const motorGroup = new THREE.Group();
+            motorGroup.position.set(pos.x, 0.03, pos.z);
+            armHolder.add(motorGroup);
+
+            // Motor Stator Coils (Copper visible inside)
+            const coilGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.06, 16);
+            const coils = new THREE.Mesh(coilGeo, copperMat);
+            motorGroup.add(coils);
+
+            // Outer Anodized Rotor Bell
+            const bellGeo = new THREE.CylinderGeometry(0.068, 0.068, 0.07, 24);
+            const bell = new THREE.Mesh(bellGeo, darkAnodizedMat);
+            bell.position.y = 0.01;
+            bell.castShadow = true;
+            motorGroup.add(bell);
+
+            // Motor Top Shaft & Lock Nut
+            const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.12, 12), titaniumMat);
+            shaft.position.y = 0.04;
+            motorGroup.add(shaft);
+
+            // Landing Skid / Leg below motor
+            const skidLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.008, 0.28, 12), carbonMat);
+            skidLeg.position.set(pos.x, -0.16, pos.z);
+            skidLeg.rotation.x = pos.isFront ? -0.2 : 0.2;
+            skidLeg.castShadow = true;
+            armHolder.add(skidLeg);
+
+            // Rubber Foot
+            const foot = new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 12), darkAnodizedMat);
+            foot.position.set(pos.x, -0.3, pos.z + (pos.isFront ? -0.03 : 0.03));
+            armHolder.add(foot);
+
+            // Navigation Light LEDs at arm tips
+            const ledGeo = new THREE.SphereGeometry(0.025, 16, 16);
+            let ledMat = pos.isFront ? (pos.isLeft ? redLedMat : greenLedMat) : whiteLedMat;
+            let ledColor = pos.isFront ? (pos.isLeft ? 0xef4444 : 0x10b981) : 0x38bdf8;
+            
+            const ledCap = new THREE.Mesh(ledGeo, ledMat);
+            ledCap.position.set(pos.x * 1.05, -0.01, pos.z * 1.05);
+            armHolder.add(ledCap);
+
+            const navLight = new THREE.PointLight(ledColor, 1.2, 2.5);
+            navLight.position.copy(ledCap.position);
+            armHolder.add(navLight);
+
+            // Propeller Assembly
+            const propGroup = new THREE.Group();
+            propGroup.position.set(pos.x, 0.08, pos.z);
+            armHolder.add(propGroup);
+
+            // Propeller Blades Mesh
+            const bladeGroup = new THREE.Group();
+            const bladeMat = new THREE.MeshStandardMaterial({
+                color: 0x1e293b,
+                roughness: 0.2,
+                metalness: 0.8,
+                transparent: true,
+                opacity: 0.92
+            });
+
+            // 2-Blade Propeller Swept Shape
+            for (let b = 0; b < 2; b++) {
+                const bladeShape = new THREE.ConeGeometry(0.05, 0.52, 16);
+                bladeShape.scale(0.3, 0.03, 1.0);
+                const blade = new THREE.Mesh(bladeShape, bladeMat);
+                blade.rotation.y = (b * Math.PI) + (pos.isLeft ? 0.2 : -0.2);
+                blade.position.set(Math.cos(b * Math.PI) * 0.24, 0, Math.sin(b * Math.PI) * 0.24);
+                blade.rotation.z = b === 0 ? 0.08 : -0.08;
+                blade.castShadow = true;
+                bladeGroup.add(blade);
+            }
+            propGroup.add(bladeGroup);
+
+            // Motion Blur Disc (Scales in visibility with spin speed)
+            const blurGeo = new THREE.CircleGeometry(0.52, 32);
+            const blurMat = new THREE.MeshBasicMaterial({
+                color: 0x64748b,
+                transparent: true,
+                opacity: 0.35,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const blurDisc = new THREE.Mesh(blurGeo, blurMat);
+            blurDisc.rotation.x = Math.PI / 2;
+            blurDisc.position.y = 0.005;
+            propGroup.add(blurDisc);
+
+            motors.push(motorGroup);
+            propBlades.push(bladeGroup);
+            propBlurs.push(blurDisc);
+        });
+
+        // --- 6. Realistic Flight Physics & Control State ---
+        const keys = { w: false, a: false, s: false, d: false, space: false, shift: false, q: false, e: false };
+
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            if (k === 'w' || e.key === 'ArrowUp') keys.w = true;
+            if (k === 'a' || e.key === 'ArrowLeft') keys.a = true;
+            if (k === 's' || e.key === 'ArrowDown') keys.s = true;
+            if (k === 'd' || e.key === 'ArrowRight') keys.d = true;
+            if (e.key === ' ') keys.space = true;
+            if (e.key === 'Shift') keys.shift = true;
+            if (k === 'q') keys.q = true;
+            if (k === 'e') keys.e = true;
+            if (k === 'h') toggleHUD();
+            if (k === 'c') toggleCamMode();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const k = e.key.toLowerCase();
+            if (k === 'w' || e.key === 'ArrowUp') keys.w = false;
+            if (k === 'a' || e.key === 'ArrowLeft') keys.a = false;
+            if (k === 's' || e.key === 'ArrowDown') keys.s = false;
+            if (k === 'd' || e.key === 'ArrowRight') keys.d = false;
+            if (e.key === ' ') keys.space = false;
+            if (e.key === 'Shift') keys.shift = false;
+            if (k === 'q') keys.q = false;
+            if (k === 'e') keys.e = false;
+        });
+
+        // Flight Telemetry States
+        const state = {
+            pos: new THREE.Vector3(0, 1.5, 0),
+            vel: new THREE.Vector3(0, 0, 0),
+            rot: new THREE.Euler(0, 0, 0, 'YXZ'),
+            targetPitch: 0,
+            targetRoll: 0,
+            targetYaw: 0,
+            rpm: 7800,
+            battery: 98,
+            camMode: 'orbit', // 'orbit' or 'follow'
+            lightsOn: true,
+            hudVisible: true
+        };
+
+        // --- 7. Synthesized Motor Sound Effects (Web Audio API) ---
+        let audioCtx = null;
+        let motorOscs = [];
+        let motorGain = null;
+        let soundEnabled = false;
+
+        function initAudio() {
+            if (audioCtx) return;
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+
+            motorGain = audioCtx.createGain();
+            motorGain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(600, audioCtx.currentTime);
+
+            motorGain.connect(filter);
+            filter.connect(audioCtx.destination);
+
+            // 4 Oscillators for 4 motors quad hum
+            const freqs = [120, 122, 118, 125];
+            freqs.forEach(f => {
+                const osc = audioCtx.createOscillator();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(f, audioCtx.currentTime);
+                osc.connect(motorGain);
+                osc.start();
+                motorOscs.push(osc);
+            });
+        }
+
+        function updateAudio(rpm) {
+            if (!audioCtx || !soundEnabled) return;
+            const baseFreq = 80 + (rpm / 8000) * 110;
+            motorOscs.forEach((osc, idx) => {
+                const detune = (idx - 1.5) * 2.5;
+                osc.frequency.setTargetAtTime(baseFreq + detune, audioCtx.currentTime, 0.05);
+            });
+        }
+
+        // --- 8. UI Interaction & Buttons ---
+        const btnCamMode = document.getElementById('btn-cam-mode');
+        const camModeText = document.getElementById('cam-mode-text');
+        const btnSound = document.getElementById('btn-sound');
+        const soundIcon = document.getElementById('sound-icon');
+        const btnLights = document.getElementById('btn-lights');
+        const btnReset = document.getElementById('btn-reset');
+        const btnToggleHUD = document.getElementById('btn-toggle-hud');
+        const hudOverlay = document.getElementById('hud-overlay');
+        const hudBottom = document.getElementById('hud-bottom');
+
+        function toggleCamMode() {
+            if (state.camMode === 'orbit') {
+                state.camMode = 'follow';
+                camModeText.textContent = '추적 뷰 (Chase)';
+                controls.enableLock = false;
+            } else {
+                state.camMode = 'orbit';
+                camModeText.textContent = '오비트 뷰';
+            }
+        }
+        btnCamMode.addEventListener('click', toggleCamMode);
+
+        btnSound.addEventListener('click', () => {
+            initAudio();
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            soundEnabled = !soundEnabled;
+            if (soundEnabled) {
+                soundIcon.className = 'fa-solid fa-volume-high text-cyan-400';
+                motorGain.gain.setTargetAtTime(0.08, audioCtx.currentTime, 0.1);
+            } else {
+                soundIcon.className = 'fa-solid fa-volume-xmark text-slate-400';
+                motorGain.gain.setTargetAtTime(0.001, audioCtx.currentTime, 0.1);
+            }
+        });
+
+        btnLights.addEventListener('click', () => {
+            state.lightsOn = !state.lightsOn;
+            btnLights.firstElementChild.className = state.lightsOn ? 'fa-solid fa-lightbulb text-amber-400' : 'fa-solid fa-lightbulb text-slate-500';
+            beaconLights.forEach(l => l.visible = state.lightsOn);
+        });
+
+        btnReset.addEventListener('click', () => {
+            state.pos.set(0, 1.5, 0);
+            state.vel.set(0, 0, 0);
+            state.rot.set(0, 0, 0);
+            controls.target.set(0, 1.2, 0);
+        });
+
+        function toggleHUD() {
+            state.hudVisible = !state.hudVisible;
+            const opacity = state.hudVisible ? '1' : '0';
+            const pointer = state.hudVisible ? 'auto' : 'none';
+            hudOverlay.style.opacity = opacity;
+            hudBottom.style.opacity = opacity;
+            hudOverlay.style.pointerEvents = pointer;
+            hudBottom.style.pointerEvents = pointer;
+        }
+        btnToggleHUD.addEventListener('click', toggleHUD);
+
+        // --- 9. Telemetry HUD Update ---
+        const teleAlt = document.getElementById('tele-alt');
+        const teleSpeed = document.getElementById('tele-speed');
+        const teleRpm = document.getElementById('tele-rpm');
+        const teleBat = document.getElementById('tele-bat');
+        const batBar = document.getElementById('bat-bar');
+        const telePitch = document.getElementById('tele-pitch');
+        const teleRoll = document.getElementById('tele-roll');
+        const teleYaw = document.getElementById('tele-yaw');
+
+        function updateHUD(speed) {
+            teleAlt.textContent = Math.max(0, state.pos.y).toFixed(2);
+            teleSpeed.textContent = speed.toFixed(2);
+            teleRpm.textContent = Math.round(state.rpm);
+            
+            const pDeg = (state.rot.x * (180 / Math.PI)).toFixed(1);
+            const rDeg = (-state.rot.z * (180 / Math.PI)).toFixed(1);
+            const yDeg = Math.round((state.rot.y * (180 / Math.PI)) % 360);
+            
+            telePitch.textContent = `${pDeg}°`;
+            teleRoll.textContent = `${rDeg}°`;
+            teleYaw.textContent = `${yDeg < 0 ? yDeg + 360 : yDeg}°`;
+
+            // Slowly simulate battery drain over time
+            if (state.rpm > 2000 && state.battery > 0) {
+                state.battery -= 0.0008;
+                const batVal = Math.max(0, Math.round(state.battery));
+                teleBat.textContent = `${batVal}%`;
+                batBar.style.width = `${batVal}%`;
+            }
+        }
+
+        // --- 9b. Quadrotor Physics / Sensors / Wind / Kill-Cylinder / RL Env ---
+        const SIM = (() => {
+            const V3 = THREE.Vector3, Q = THREE.Quaternion;
+            const P = { m: 1.2, g: 9.81, Tmax: 26, I: new V3(.015, .025, .015), tauMax: new V3(.6, .3, .6), kd: .06, kl: .1, mt: .03, h: .004 };
+            const CYL = { R: 1.0, H: 0.8 };            // 킬 실린더 반지름/반높이 (m)
+            const HOME = { lat: 37.5665, lon: 126.9780, elev: 38 };
+            const HOVER_Y = 3;
+            const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+            const gauss = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(6.2832 * Math.random()); };
+            const ou = (x, tau, sd, h) => x - x / tau * h + sd * Math.sqrt(2 * h / tau) * gauss(); // Ornstein-Uhlenbeck
+            const S = { p: new V3(), v: new V3(), q: new Q(), w: new V3(), T: 0, tau: new V3(), cmd: { T: 0, tau: new V3() }, f: new V3(),
+                t: 0, alive: true, center: new V3(0, HOVER_Y, 0), zint: 0, best: 0, mode: 'manual', windOn: true, acc: 0, deadClock: 0, last: [0, 0, 0, 0], envAcc: 0 };
+
+            // ---- Wind: 방향은 천천히 표류(OU, τ=30s), 평균풍속은 τ=40s로 ±2m/s 변동, 돌풍은 τ=1.5s ----
+            const W = { dir: 0, dd: 0, base: 5, dev: 0, mean: 5, gust: new V3(), vec: new V3() };
+            function windInit() { W.dir = Math.random() * 6.2832; W.dd = 0; W.base = 1 + 8 * Math.random(); W.dev = 0; W.gust.set(0, 0, 0); }
+            function windStep(h) {
+                W.dd = ou(W.dd, 30, .06, h); W.dir += W.dd * h;
+                W.dev = ou(W.dev, 40, 2, h); W.mean = clamp(W.base + W.dev, 0, 12);
+                const gs = .15 * W.mean + .2;
+                W.gust.set(ou(W.gust.x, 1.5, gs, h), ou(W.gust.y, 1.5, gs * .4, h), ou(W.gust.z, 1.5, gs, h));
+                W.vec.set(Math.cos(W.dir) * W.mean + W.gust.x, W.gust.y, Math.sin(W.dir) * W.mean + W.gust.z);
+            }
+
+            // ---- Rigid-body dynamics (추력 T, 기체 토크 tau; 모터 1차 지연) ----
+            function phys(h) {
+                const k = Math.min(1, h / P.mt);
+                S.T += (S.cmd.T - S.T) * k; S.tau.lerp(S.cmd.tau, k);
+                windStep(h);
+                const up = new V3(0, 1, 0).applyQuaternion(S.q);
+                const vr = S.v.clone(); if (S.windOn) vr.sub(W.vec);
+                const drag = vr.multiplyScalar(-P.kd * vr.length() - P.kl);
+                S.f.copy(up).multiplyScalar(S.T / P.m).addScaledVector(drag, 1 / P.m);   // 비중력 가속도(=가속도계 원값, 월드)
+                S.v.addScaledVector(S.f, h); S.v.y -= P.g * h;
+                S.p.addScaledVector(S.v, h);
+                if (S.p.y < 0.3) { S.p.y = 0.3; S.v.y = Math.max(0, S.v.y); S.v.x *= .9; S.v.z *= .9; }
+                const w = S.w, I = P.I;
+                const Iw = new V3(I.x * w.x, I.y * w.y, I.z * w.z), c = w.clone().cross(Iw);
+                w.x += (S.tau.x - c.x) / I.x * h; w.y += (S.tau.y - c.y) / I.y * h; w.z += (S.tau.z - c.z) / I.z * h;
+                const wl = w.length(); if (wl > 1e-9) S.q.multiply(new Q().setFromAxisAngle(w.clone().divideScalar(wl), wl * h)).normalize();
+                S.t += h;
+                if (Math.hypot(S.p.x - S.center.x, S.p.z - S.center.z) > CYL.R || Math.abs(S.p.y - S.center.y) > CYL.H) S.alive = false;
+            }
+
+            // ---- Mode 2 수동 조종: 자세(각도) 제어 + 고도(수직속도) 홀드, 위치는 조종사가 잡아야 함 ----
+            const inp = { thr: 0, yawr: 0, fwd: 0, rgt: 0 };
+            function manual(h) {
+                const F = new V3(0, 0, -1).applyQuaternion(S.q); F.y = 0; if (F.lengthSq() < 1e-6) F.set(0, 0, -1); F.normalize();
+                const R = new V3(-F.z, 0, F.x);
+                const d = F.multiplyScalar(inp.fwd).addScaledVector(R, inp.rgt); if (d.length() > 1) d.normalize();
+                const tn = Math.tan(.45), ud = new V3(d.x * tn, 1, d.z * tn).normalize();
+                const up = new V3(0, 1, 0).applyQuaternion(S.q);
+                const e = up.clone().cross(ud).applyQuaternion(S.q.clone().invert());
+                S.cmd.tau.set(clamp(2.5 * e.x - .28 * S.w.x, -.6, .6), clamp(.08 * (inp.yawr * 2 - S.w.y), -.3, .3), clamp(2.5 * e.z - .28 * S.w.z, -.6, .6));
+                const ev = 2.5 * inp.thr - S.v.y; S.zint = clamp(S.zint + ev * h, -3, 3);
+                S.cmd.T = clamp(P.m * (P.g + 4 * ev + 1.5 * S.zint) / Math.max(.5, up.y), 0, P.Tmax);
+            }
+
+            // ---- Sensors ----
+            const SN = { gyro: [0, 0, 0], acc: [0, 0, 0], mag: [0, 0, 0], baroP: 101325, baroAlt: 0,
+                gnss: { lat: 0, lon: 0, alt: 0, sats: 0, hdop: 0, vn: 0, ve: 0 }, rtk: { e: 0, n: 0, u: 0, fix: 'FIXED', sigma: .015 },
+                flow: [0, 0, 0], tof: -1, sonar: -1, agl: HOVER_Y, lidar: [], lidarUp: 12 };
+            const B = { a: new V3(), g: new V3(), baro: 0, gn: new V3() };
+            const tm = { mag: 1, baro: 1, gnss: 1, flow: 1, lid: 1 };
+            const ray = new THREE.Raycaster(); const targets = []; envGroup.traverse(o => { if (o.isMesh) targets.push(o); });
+            const cast = (o, dir, far) => { ray.set(o, dir); ray.far = far; const hit = ray.intersectObjects(targets, false)[0]; return hit ? hit.distance : far; };
+            function sensors(h) {
+                const qi = S.q.clone().invert(), up = new V3(0, 1, 0).applyQuaternion(S.q);
+                const fb = S.f.clone().applyQuaternion(qi);
+                SN.acc = [fb.x + B.a.x + .05 * gauss(), fb.y + B.a.y + .05 * gauss(), fb.z + B.a.z + .05 * gauss()];     // IMU 가속도 (m/s²)
+                SN.gyro = [S.w.x + B.g.x + .003 * gauss(), S.w.y + B.g.y + .003 * gauss(), S.w.z + B.g.z + .003 * gauss()]; // 자이로 (rad/s)
+                if ((tm.lid += h) >= .1) { tm.lid = 0;                                                                    // LiDAR/ToF/초음파 (10Hz)
+                    const r = cast(S.p, new V3(0, -1, 0).applyQuaternion(S.q), 12);
+                    SN.tof = r <= 8 ? r + .02 * gauss() : -1; SN.sonar = r <= 4 ? r * (1 + .01 * gauss()) + .01 * gauss() : -1;
+                    SN.agl = SN.tof > 0 ? SN.tof * up.y : (SN.sonar > 0 ? SN.sonar * up.y : 8);                            // AGL = 기울기 보정
+                    SN.lidarUp = cast(S.p, up, 12); SN.lidar = [];
+                    for (let i = 0; i < 16; i++) { const a = i * Math.PI / 8; SN.lidar.push(+cast(S.p, new V3(Math.cos(a), 0, Math.sin(a)).applyQuaternion(S.q), 12).toFixed(2)); }
+                }
+                if ((tm.mag += h) >= .02) { tm.mag = 0; const m = new V3(0, -.40, -.30).applyQuaternion(qi);               // 지자기 (gauss, 북=-Z)
+                    SN.mag = [m.x + .005 * gauss(), m.y + .005 * gauss(), m.z + .005 * gauss()]; }
+                if ((tm.baro += h) >= .04) { tm.baro = 0; B.baro += .02 * gauss() * Math.sqrt(.04);                         // 기압계 (25Hz, 드리프트 포함)
+                    const ha = S.p.y + HOME.elev + B.baro;
+                    SN.baroP = 101325 * Math.pow(1 - 2.25577e-5 * ha, 5.25588) + 3 * gauss();
+                    SN.baroAlt = 44330.8 * (1 - Math.pow(SN.baroP / 101325, .190263)) - HOME.elev; }
+                if ((tm.gnss += h) >= .1) { tm.gnss = 0;                                                                    // GNSS + RTK (10Hz)
+                    B.gn.x += .02 * gauss(); B.gn.z += .02 * gauss(); B.gn.multiplyScalar(.995);
+                    const e = S.p.x + B.gn.x + .8 * gauss(), n = -S.p.z - B.gn.z + .8 * gauss(), G = SN.gnss;
+                    G.lat = HOME.lat + n / 111320; G.lon = HOME.lon + e / (111320 * Math.cos(HOME.lat * Math.PI / 180));
+                    G.alt = HOME.elev + S.p.y + 1.5 * gauss(); G.sats = Math.round(clamp(15 + 2 * gauss(), 9, 22)); G.hdop = +(.7 + .1 * Math.abs(gauss())).toFixed(2);
+                    G.ve = S.v.x + .05 * gauss(); G.vn = -S.v.z + .05 * gauss();
+                    const fixed = Math.random() > .03, s = fixed ? .015 : .2; SN.rtk.fix = fixed ? 'FIXED' : 'FLOAT'; SN.rtk.sigma = s;
+                    SN.rtk.e = S.p.x + s * gauss(); SN.rtk.n = -S.p.z + s * gauss(); SN.rtk.u = S.p.y + s * 1.5 * gauss(); }
+                if ((tm.flow += h) >= .033) { tm.flow = 0; const vb = S.v.clone().applyQuaternion(qi), hh = Math.max(.1, SN.agl);   // 옵티컬 플로우 (30Hz)
+                    SN.flow = [vb.x / hh + .02 * gauss(), vb.z / hh + .02 * gauss(), Math.round(clamp(255 * (1 - hh / 12), 0, 255))]; }
+            }
+
+            // ---- Reset / Gym-style API ----
+            function reset() {
+                S.p.set(0, HOVER_Y, 0); S.center.copy(S.p); S.v.set(0, 0, 0); S.q.identity(); S.w.set(0, 0, 0);
+                S.T = P.m * P.g; S.cmd.T = S.T; S.tau.set(0, 0, 0); S.cmd.tau.set(0, 0, 0); S.t = 0; S.alive = true; S.zint = 0; S.last = [0, 0, 0, 0]; S.deadClock = 0;
+                windInit(); B.a.set(gauss() * .05, gauss() * .05, gauss() * .05); B.g.set(gauss() * .002, gauss() * .002, gauss() * .002); B.baro = gauss() * .3; B.gn.set(0, 0, 0);
+                for (const k in tm) tm[k] = 1; sensors(P.h); sensors(P.h); return obs();
+            }
+            function obs() {
+                const c = S.center;
+                return [...SN.gyro.map(x => x / 10), ...SN.acc.map(x => x / 20), ...SN.mag.map(x => x / .5),
+                    (SN.baroAlt - c.y) / CYL.H, (SN.rtk.e - c.x) / CYL.R, (SN.rtk.u - c.y) / CYL.H, (-SN.rtk.n - c.z) / CYL.R,
+                    SN.flow[0] / 3, SN.flow[1] / 3, SN.agl / 5, ...S.last];   // 20차원 (센서 값만 사용, 참값 미사용)
+            }
+            function step(a) {   // a: [추력, 토크x, 토크y, 토크z] ∈[-1,1], 50Hz 제어 (물리 5서브스텝)
+                a = a.map(x => clamp(x, -1, 1));
+                S.cmd.T = clamp(P.m * P.g * (1 + 1.2 * a[0]), 0, P.Tmax); S.cmd.tau.set(a[1] * P.tauMax.x, a[2] * P.tauMax.y, a[3] * P.tauMax.z);
+                for (let i = 0; i < 5 && S.alive; i++) { phys(P.h); sensors(P.h); }
+                const dr = Math.hypot(S.p.x - S.center.x, S.p.z - S.center.z) / CYL.R, dy = Math.abs(S.p.y - S.center.y) / CYL.H;
+                let r = 1 - .5 * dr - .3 * dy - .02 * S.w.length() - .05 * a.reduce((s, x, i) => s + Math.abs(x - S.last[i]), 0);
+                if (!S.alive) r = -10;
+                S.last = a; const done = !S.alive || S.t >= 60;
+                return { obs: obs(), reward: r, done, info: { t: S.t, alive: S.alive, wind: W.mean } };
+            }
+
+            // ---- 화면 요소 ----
+            const cylMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee, wireframe: true, transparent: true, opacity: .35 });
+            const cylMesh = new THREE.Mesh(new THREE.CylinderGeometry(CYL.R, CYL.R, CYL.H * 2, 32, 4, true), cylMat); scene.add(cylMesh);
+            const arrow = new THREE.ArrowHelper(new V3(1, 0, 0), new V3(), 1, 0xfacc15, .25, .15); scene.add(arrow);
+            const panel = document.getElementById('sim-panel'), banner = document.getElementById('sim-banner');
+            const pressed = {};
+            window.addEventListener('keydown', e => { pressed[e.code] = true; if (e.code.startsWith('Arrow')) e.preventDefault();
+                if (e.code === 'KeyG') S.windOn = !S.windOn; if (e.code === 'KeyR') reset(); if (e.code === 'KeyT') panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                if (e.code === 'KeyM') { S.mode = S.mode === 'manual' ? 'agent' : 'manual'; reset(); } });
+            window.addEventListener('keyup', e => { pressed[e.code] = false; });
+            document.getElementById('btn-reset').addEventListener('click', () => reset());
+            const ax = (a, b) => (pressed[a] ? 1 : 0) - (pressed[b] ? 1 : 0);
+            let policy = null, panelClock = 0; const E = new THREE.Euler();
+
+            function frame(dt) {
+                const k = Math.min(1, 8 * dt);   // 스틱 스무딩
+                inp.thr += (ax('KeyW', 'KeyS') - inp.thr) * k; inp.yawr += (ax('KeyA', 'KeyD') - inp.yawr) * k;   // 왼쪽 스틱: 스로틀/러더
+                inp.fwd += (ax('ArrowUp', 'ArrowDown') - inp.fwd) * k; inp.rgt += (ax('ArrowRight', 'ArrowLeft') - inp.rgt) * k; // 오른쪽 스틱: 엘리베이터/에일러론
+                S.acc += Math.min(dt, .05);
+                if (S.mode === 'manual') { while (S.acc >= P.h) { S.acc -= P.h; if (S.alive) { manual(P.h); phys(P.h); sensors(P.h); } } }
+                else { while (S.acc >= .02) { S.acc -= .02; if (S.alive) step(policy ? policy(obs()) : [0, 0, 0, 0]); } }
+                if (!S.alive) { S.deadClock += dt; if (S.deadClock - dt <= 0) S.best = Math.max(S.best, S.t); if (S.deadClock > 1.3) reset(); }
+                banner.style.display = S.alive ? 'none' : 'block'; banner.textContent = `💥 실린더 이탈 — 생존 ${S.t.toFixed(1)}s (최고 ${S.best.toFixed(1)}s)`;
+                cylMat.color.set(S.alive ? 0x22d3ee : 0xef4444); cylMesh.position.copy(S.center);
+                arrow.visible = S.windOn; if (S.windOn) { const m = W.vec.length(); arrow.position.set(S.p.x, S.p.y + .6, S.p.z); arrow.setDirection(m > .01 ? W.vec.clone().normalize() : new V3(1, 0, 0)); arrow.setLength(Math.max(.3, m * .25), .25, .15); }
+                drone.position.copy(S.p); drone.rotation.order = 'YXZ'; drone.quaternion.copy(S.q);
+                E.setFromQuaternion(S.q, 'YXZ'); state.pos.copy(S.p); state.vel.copy(S.v); state.rot.set(E.x, E.y, E.z);
+                if ((panelClock += dt) > .1) { panelClock = 0; const f = (a, n = 2) => a.map(x => x.toFixed(n)).join(', '), G = SN.gnss;
+                    panel.textContent = `[${S.mode === 'manual' ? 'MODE2 수동' : 'AI 에이전트'}] t=${S.t.toFixed(1)}s  바람 ${S.windOn ? 'ON' : 'OFF'} ${W.mean.toFixed(1)}m/s 방향 ${(W.dir * 57.3 % 360 + 360) % 360 | 0}°\n` +
+                        `ACC  ${f(SN.acc)} m/s²\nGYRO ${f(SN.gyro, 3)} rad/s\nMAG  ${f(SN.mag, 3)} G\nBARO ${SN.baroP.toFixed(1)}Pa  ${SN.baroAlt.toFixed(2)}m\n` +
+                        `GNSS ${G.lat.toFixed(6)}, ${G.lon.toFixed(6)}, ${G.alt.toFixed(1)}m  sat ${G.sats}  HDOP ${G.hdop}\nRTK  ${SN.rtk.fix} σ${SN.rtk.sigma}m  E${SN.rtk.e.toFixed(2)} N${SN.rtk.n.toFixed(2)} U${SN.rtk.u.toFixed(2)}\n` +
+                        `FLOW ${f(SN.flow.slice(0, 2))} rad/s q${SN.flow[2]}\nToF ${SN.tof.toFixed(2)}m  초음파 ${SN.sonar.toFixed(2)}m  AGL ${SN.agl.toFixed(2)}m\nLiDAR(16) min ${Math.min(...SN.lidar)}m  up ${SN.lidarUp.toFixed(1)}m\n` +
+                        `[W/S 스로틀 A/D 러더 ↑↓ 전후진 ←→ 에일러론 | G 바람 R 리셋 M 모드 T 패널]`; }
+            }
+            reset();
+            return { show: v => { cylMesh.visible = v; arrow.visible = v && S.windOn; }, frame, reset, step, obs, S, W, P, CYL, SN, setPolicy: f => { policy = f; }, get thrNorm() { return S.T / P.Tmax; } };
+        })();
+        window.DroneEnv = { reset: SIM.reset, step: SIM.step, obs: SIM.obs, OBS_DIM: 20, ACT_DIM: 4, setPolicy: SIM.setPolicy, cfg: { P: SIM.P, CYL: SIM.CYL } };
+
+
+        // CORE-BEGIN  (100대 스웜: 물리 + 센서 + 신경망 정책 + 유전알고리즘, 렌더링과 무관)
+        const NSW = 100, HID = 16, NI = 15, NO = 4, NW = NI * HID + HID + HID * HID + HID + HID * NO + NO;
+        const TP = { m: 1.2, g: 9.81, Tmax: 26, Ix: .015, Iy: .025, Iz: .015, kd: .06, kl: .1, mt: .03, h: .004, R: 1.0, H: .8, Y0: 3, tau: [.6, .3, .6] };
+        const gz = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(6.2832 * Math.random()); };
+        const ouu = (x, t, sd, h) => x - x / t * h + sd * Math.sqrt(2 * h / t) * gz();
+        const TW = { dir: 0, dd: 0, base: 3, dev: 0, mean: 3, gx: 0, gy: 0, gz: 0, vx: 0, vy: 0, vz: 0, on: true };
+        function twInit(maxBase) { TW.dir = Math.random() * 6.2832; TW.dd = 0; TW.base = .5 + Math.random() * maxBase; TW.dev = 0; TW.gx = TW.gy = TW.gz = 0; }
+        function twStep(h) {   // 풍향 OU(τ30s), 평균풍속 OU(τ40s,±2m/s), 돌풍 OU(τ1.5s)
+            TW.dd = ouu(TW.dd, 30, .06, h); TW.dir += TW.dd * h; TW.dev = ouu(TW.dev, 40, 2, h);
+            TW.mean = Math.min(12, Math.max(0, TW.base + TW.dev)); const gs = .15 * TW.mean + .2;
+            TW.gx = ouu(TW.gx, 1.5, gs, h); TW.gy = ouu(TW.gy, 1.5, gs * .4, h); TW.gz = ouu(TW.gz, 1.5, gs, h);
+            TW.vx = Math.cos(TW.dir) * TW.mean + TW.gx; TW.vy = TW.gy; TW.vz = Math.sin(TW.dir) * TW.mean + TW.gz;
+        }
+        const h1 = new Float32Array(HID), h2 = new Float32Array(HID), ob = new Float32Array(NI), ao = new Float32Array(NO);
+        function fwd(w, o, out) {
+            let k = 0, s;
+            for (let j = 0; j < HID; j++) { s = w[k + NI * HID + j]; for (let i = 0; i < NI; i++) s += w[k + j * NI + i] * o[i]; h1[j] = Math.tanh(s); } k += NI * HID + HID;
+            for (let j = 0; j < HID; j++) { s = w[k + HID * HID + j]; for (let i = 0; i < HID; i++) s += w[k + j * HID + i] * h1[i]; h2[j] = Math.tanh(s); } k += HID * HID + HID;
+            for (let j = 0; j < NO; j++) { s = w[k + HID * NO + j]; for (let i = 0; i < HID; i++) s += w[k + j * HID + i] * h2[i]; out[j] = Math.tanh(s); }
+        }
+        function randNet() {
+            const w = new Float32Array(NW); let k = 0;
+            for (const [fi, fo, sc] of [[NI, HID, 1], [HID, HID, 1], [HID, NO, .15]]) { for (let i = 0; i < fi * fo; i++) w[k + i] = sc * gz() / Math.sqrt(fi); k += fi * fo + fo; }  // 출력층은 작게 시작(제멋대로지만 폭주는 안 하게)
+            return w;
+        }
+        const SW = [];
+        for (let i = 0; i < NSW; i++) SW.push({ cx: ((i % 10) - 4.5) * 3, cz: (((i / 10) | 0) - 4.5) * 3, w: randNet() });
+        const TS = { gen: 0, step: 0, maxSteps: 500, best: 0, mean: 0, alive: NSW, hist: [], bestW: SW[0].w.slice(), sigma: .15 };
+        function spawn(d) {
+            d.x = d.cx; d.y = TP.Y0; d.z = d.cz; d.vx = (Math.random() - .5) * .6; d.vy = 0; d.vz = (Math.random() - .5) * .6;
+            const ax = (Math.random() - .5) * .1, az = (Math.random() - .5) * .1, n = Math.hypot(1, ax, az);
+            d.qw = 1 / n; d.qx = ax / n; d.qy = 0; d.qz = az / n; d.wx = d.wy = d.wz = 0;
+            d.T = d.cT = TP.m * TP.g; d.tx = d.ty = d.tz = d.mx = d.my = d.mz = 0; d.fx = 0; d.fy = TP.g; d.fz = 0; d.rc = [0, 0, 0];
+            d.alive = true; d.run = false; d.fit = 0; d.life = 0; d.la = [0, 0, 0, 0];
+            d.ba = [gz() * .05, gz() * .05, gz() * .05]; d.bg = [gz() * .002, gz() * .002, gz() * .002];
+        }
+        function newGen() {
+            TS.gen++; TS.step = 0; TS.maxSteps = Math.round(Math.min(60, 10 + .5 * TS.gen) * 50);
+            twInit(Math.min(8, 1.5 + .15 * TS.gen)); for (const d of SW) spawn(d);   // 풍속 상한은 세대와 함께 점진 증가
+        }
+        function phys(d) {
+            const { m, g, h, Ix, Iy, Iz } = TP, k = Math.min(1, h / TP.mt);
+            {   // 내부 자세 루프: 목표 기울기 방향(월드)으로 up벡터를 돌리는 PD
+                const q0 = d.qw, qx = d.qx, qy = d.qy, qz = d.qz, tn = .483;
+                const Ux = 2 * (qx * qy - q0 * qz), Uy = 1 - 2 * (qx * qx + qz * qz), Uz = 2 * (qy * qz + q0 * qx);
+                let Dx = d.rc[0] * tn, Dz = d.rc[1] * tn; const Dn = 1 / Math.sqrt(Dx * Dx + 1 + Dz * Dz); Dx *= Dn; const Dy = Dn; Dz *= Dn;
+                const ex = Uy * Dz - Uz * Dy, ey = Uz * Dx - Ux * Dz, ez = Ux * Dy - Uy * Dx;   // up × desired (월드)
+                const bx = (1 - 2 * (qy * qy + qz * qz)) * ex + 2 * (qx * qy + q0 * qz) * ey + 2 * (qx * qz - q0 * qy) * ez;
+                const bz = 2 * (qx * qz + q0 * qy) * ex + 2 * (qy * qz - q0 * qx) * ey + (1 - 2 * (qx * qx + qy * qy)) * ez;
+                d.mx = Math.max(-.6, Math.min(.6, 2.5 * bx - .28 * d.wx)); d.mz = Math.max(-.6, Math.min(.6, 2.5 * bz - .28 * d.wz));
+                d.my = Math.max(-.3, Math.min(.3, .08 * (d.rc[2] - d.wy)));
+            }
+            d.T += (d.cT - d.T) * k; d.tx += (d.mx - d.tx) * k; d.ty += (d.my - d.ty) * k; d.tz += (d.mz - d.tz) * k;
+            const w0 = d.qw, x = d.qx, y = d.qy, z = d.qz;
+            const ux = 2 * (x * y - w0 * z), uy = 1 - 2 * (x * x + z * z), uz = 2 * (y * z + w0 * x);
+            let rx = d.vx, ry = d.vy, rz = d.vz; if (TW.on) { rx -= TW.vx; ry -= TW.vy; rz -= TW.vz; }
+            const c = -(TP.kd * Math.sqrt(rx * rx + ry * ry + rz * rz) + TP.kl) / m, t = d.T / m;
+            d.fx = ux * t + c * rx; d.fy = uy * t + c * ry; d.fz = uz * t + c * rz;
+            d.vx += d.fx * h; d.vy += d.fy * h - g * h; d.vz += d.fz * h; d.x += d.vx * h; d.y += d.vy * h; d.z += d.vz * h;
+            const wx = d.wx, wy = d.wy, wz = d.wz;
+            d.wx += (d.tx - wy * wz * (Iz - Iy)) / Ix * h; d.wy += (d.ty - wz * wx * (Ix - Iz)) / Iy * h; d.wz += (d.tz - wx * wy * (Iy - Ix)) / Iz * h;
+            const wl = Math.sqrt(d.wx * d.wx + d.wy * d.wy + d.wz * d.wz), th = wl * h;
+            if (th > 1e-9) {
+                const s = Math.sin(th / 2) / wl, dw = Math.cos(th / 2), dx = d.wx * s, dy = d.wy * s, dz = d.wz * s;
+                const nw = w0 * dw - x * dx - y * dy - z * dz, nx = w0 * dx + dw * x + y * dz - z * dy, ny = w0 * dy + dw * y + z * dx - x * dz, nz = w0 * dz + dw * z + x * dy - y * dx;
+                const n = 1 / Math.sqrt(nw * nw + nx * nx + ny * ny + nz * nz); d.qw = nw * n; d.qx = nx * n; d.qy = ny * n; d.qz = nz * n;
+            }
+            if (Math.hypot(d.x - d.cx, d.z - d.cz) > TP.R || Math.abs(d.y - TP.Y0) > TP.H) d.alive = false;
+        }
+        function sense(d) {   // 노이즈 낀 센서 → 15차원 관측 (참값 미사용)
+            const w0 = d.qw, x = d.qx, y = d.qy, z = d.qz, o = ob;
+            const bx = (v1, v2, v3) => (1 - 2 * (y * y + z * z)) * v1 + 2 * (x * y + w0 * z) * v2 + 2 * (x * z - w0 * y) * v3;
+            const by = (v1, v2, v3) => 2 * (x * y - w0 * z) * v1 + (1 - 2 * (x * x + z * z)) * v2 + 2 * (y * z + w0 * x) * v3;
+            const bz = (v1, v2, v3) => 2 * (x * z + w0 * y) * v1 + 2 * (y * z - w0 * x) * v2 + (1 - 2 * (x * x + y * y)) * v3;
+            o[0] = (d.wx + d.bg[0] + .003 * gz()) / 2; o[1] = (d.wy + d.bg[1] + .003 * gz()) / 2; o[2] = (d.wz + d.bg[2] + .003 * gz()) / 2;       // gyro
+            o[3] = (bx(d.fx, d.fy, d.fz) + d.ba[0] + .05 * gz()) / 2; o[4] = (by(d.fx, d.fy, d.fz) + d.ba[1] + .05 * gz()) / 10; o[5] = (bz(d.fx, d.fy, d.fz) + d.ba[2] + .05 * gz()) / 2; // accel
+            o[6] = (d.x - d.cx + .015 * gz()) / TP.R; o[7] = (d.y - TP.Y0 + .02 * gz()) / TP.H; o[8] = (d.z - d.cz + .015 * gz()) / TP.R;                  // RTK
+            o[9] = (d.vx + .05 * gz()) / 1.5; o[10] = (d.vz + .05 * gz()) / 1.5;      // 광류+AHRS 융합 수평속도(월드)
+            for (let i = 0; i < 4; i++) o[11 + i] = d.la[i];
+        }
+        function stepAll() {
+            for (const d of SW) {
+                d.run = d.alive; if (!d.alive) continue;
+                sense(d); fwd(d.w, ob, ao); if (!TS.yawOn) ao[3] = 0; d.ac = [ao[0], ao[1], ao[2], ao[3]];
+                d.cT = Math.min(TP.Tmax, Math.max(0, TP.m * TP.g * (1 + 1.2 * ao[0]))); d.rc = [ao[1], ao[2], ao[3] * 2];
+            }
+            for (let s = 0; s < 5; s++) { twStep(TP.h); for (const d of SW) if (d.alive) phys(d); }
+            let na = 0;
+            for (const d of SW) {
+                if (!d.run) continue;
+                const dr = Math.hypot(d.x - d.cx, d.z - d.cz) / TP.R, dy = Math.abs(d.y - TP.Y0) / TP.H, a = d.ac;
+                let r = 1 - .5 * dr - .3 * dy - .02 * Math.hypot(d.wx, d.wy, d.wz) - .05 * (Math.abs(a[0] - d.la[0]) + Math.abs(a[1] - d.la[1]) + Math.abs(a[2] - d.la[2]) + Math.abs(a[3] - d.la[3]));
+                if (!d.alive) r = -10; d.fit += r; d.la = a; d.life++; if (d.alive) na++;
+            }
+            TS.step++; TS.alive = na;
+            if (na === 0 || TS.step >= TS.maxSteps) evolve();
+        }
+        function evolve() {
+            const idx = SW.map((_, i) => i).sort((a, b) => SW[b].fit - SW[a].fit), old = SW.map(d => d.w);
+            TS.best = SW[idx[0]].fit; TS.bestLife = Math.max(...SW.map(d => d.life)) / 50; TS.mean = SW.reduce((s, d) => s + d.fit, 0) / NSW;
+            TS.survivors = SW.filter(d => d.alive).length; TS.bestW = old[idx[0]].slice(); TS.hist.push(+TS.bestLife.toFixed(1)); if (TS.hist.length > 12) TS.hist.shift();
+            TS.sigma = Math.max(.015, .06 * Math.pow(.99, TS.gen));
+            const pick = () => { const a = idx[Math.floor(Math.random() * 20)], b = idx[Math.floor(Math.random() * 20)]; return SW[a].fit > SW[b].fit ? old[a] : old[b]; };
+            const nw = [];
+            for (let i = 0; i < 5; i++) nw.push(old[idx[i]].slice());                 // 엘리트 5
+            for (let i = 0; i < 2; i++) nw.push(randNet());                            // 무작위 이민자 2
+            while (nw.length < NSW) {                                                   // 교차 + 희소 돌연변이
+                const p = pick(), q = pick(), c = new Float32Array(NW);
+                for (let j = 0; j < NW; j++) { c[j] = Math.random() < .5 ? p[j] : q[j]; if (Math.random() < .5) c[j] += TS.sigma * gz(); }
+                nw.push(c);
+            }
+            SW.forEach((d, i) => { d.w = nw[i]; }); newGen();
+        }
+        newGen();
+        // CORE-END
+        // PPO-BEGIN  (공유 정책 1개 + 100개 환경 병렬 수집, 수동 역전파, Adam)
+        TS.mode = 'ga';
+        const NC = NI * HID + HID + HID * HID + HID + HID + 1;
+        const PP = { actor: null, critic: new Float32Array(NC), ls: new Float32Array(4).fill(-1.2), T: 128, buf: null, t: 0, upd: 0, ep: 0, rew: 0, steps: 0, lr: 3e-4, at: 0,
+            mA: new Float32Array(NW), vA: new Float32Array(NW), mC: new Float32Array(NC), vC: new Float32Array(NC), mS: new Float32Array(4), vS: new Float32Array(4) };
+        { let k = 0; for (const [fi, fo] of [[NI, HID], [HID, HID], [HID, 1]]) { for (let i = 0; i < fi * fo; i++) PP.critic[k + i] = gz() / Math.sqrt(fi); k += fi * fo + fo; } }
+        const q1 = new Float32Array(HID), q2 = new Float32Array(HID), c1 = new Float32Array(HID), c2 = new Float32Array(HID), mu = new Float32Array(4), vo = new Float32Array(1), dd1 = new Float32Array(HID), dd2 = new Float32Array(HID);
+        function netF(w, no, o, a1, a2, out, th) {
+            let k = 0, s;
+            for (let j = 0; j < HID; j++) { s = w[k + NI * HID + j]; for (let i = 0; i < NI; i++) s += w[k + j * NI + i] * o[i]; a1[j] = Math.tanh(s); } k += NI * HID + HID;
+            for (let j = 0; j < HID; j++) { s = w[k + HID * HID + j]; for (let i = 0; i < HID; i++) s += w[k + j * HID + i] * a1[i]; a2[j] = Math.tanh(s); } k += HID * HID + HID;
+            for (let j = 0; j < no; j++) { s = w[k + HID * no + j]; for (let i = 0; i < HID; i++) s += w[k + j * HID + i] * a2[i]; out[j] = th ? Math.tanh(s) : s; }
+        }
+        function netB(w, g, no, o, a1, a2, dout) {   // dout = 출력 pre-activation에 대한 손실 기울기
+            const k2 = NI * HID + HID, k3 = k2 + HID * HID + HID; dd2.fill(0); dd1.fill(0);
+            for (let j = 0; j < no; j++) { const dj = dout[j]; g[k3 + HID * no + j] += dj; for (let i = 0; i < HID; i++) { g[k3 + j * HID + i] += dj * a2[i]; dd2[i] += dj * w[k3 + j * HID + i]; } }
+            for (let i = 0; i < HID; i++) dd2[i] *= 1 - a2[i] * a2[i];
+            for (let j = 0; j < HID; j++) { const dj = dd2[j]; g[k2 + HID * HID + j] += dj; for (let i = 0; i < HID; i++) { g[k2 + j * HID + i] += dj * a1[i]; dd1[i] += dj * w[k2 + j * HID + i]; } }
+            for (let i = 0; i < HID; i++) dd1[i] *= 1 - a1[i] * a1[i];
+            for (let j = 0; j < HID; j++) { const dj = dd1[j]; g[NI * HID + j] += dj; for (let i = 0; i < NI; i++) g[j * NI + i] += dj * o[i]; }
+        }
+        function adam(p, g, m, v, lr) {
+            const c1_ = 1 - Math.pow(.9, PP.at), c2_ = 1 - Math.pow(.999, PP.at);
+            let n = 0; for (let i = 0; i < g.length; i++) n += g[i] * g[i]; const sc = Math.min(1, .5 / (Math.sqrt(n) + 1e-8));   // 기울기 노름 클리핑 .5
+            for (let i = 0; i < p.length; i++) { const gi = g[i] * sc; m[i] = .9 * m[i] + .1 * gi; v[i] = .999 * v[i] + .001 * gi * gi; p[i] -= lr * (m[i] / c1_) / (Math.sqrt(v[i] / c2_) + 1e-8); }
+        }
+        function rewardOf(d) {
+            const a = d.ac, dr = Math.hypot(d.x - d.cx, d.z - d.cz) / TP.R, dy = Math.abs(d.y - TP.Y0) / TP.H;
+            let r = 1 - .5 * dr - .3 * dy - .02 * Math.hypot(d.wx, d.wy, d.wz) - .05 * (Math.abs(a[0] - d.la[0]) + Math.abs(a[1] - d.la[1]) + Math.abs(a[2] - d.la[2]) + Math.abs(a[3] - d.la[3]));
+            if (!d.alive) r = -10; d.la = a; return r;
+        }
+        function ppoStepAll() {
+            const nk = TS.yawOn ? 4 : 3, B = PP.buf, t = PP.t, sd = [0, 1, 2, 3].map(k => Math.exp(PP.ls[k]));
+            for (let n = 0; n < NSW; n++) {
+                const d = SW[n], idx = t * NSW + n; sense(d); B.obs.set(ob, idx * NI);
+                netF(PP.actor, 4, ob, q1, q2, mu, true); netF(PP.critic, 1, ob, c1, c2, vo, false);
+                let lp = 0; for (let k = 0; k < 4; k++) { const a = mu[k] + sd[k] * gz(); B.act[idx * 4 + k] = a; if (k < nk) lp += -.5 * ((a - mu[k]) / sd[k]) ** 2 - PP.ls[k] - .9189; ao[k] = Math.max(-1, Math.min(1, a)); }
+                if (!TS.yawOn) ao[3] = 0; B.lp[idx] = lp; B.val[idx] = vo[0]; d.ac = [ao[0], ao[1], ao[2], ao[3]];
+                d.cT = Math.min(TP.Tmax, Math.max(0, TP.m * TP.g * (1 + 1.2 * ao[0]))); d.rc = [ao[1], ao[2], ao[3] * 2];
+            }
+            for (let s = 0; s < 5; s++) { twStep(TP.h); for (const d of SW) if (d.alive) phys(d); }
+            let na = 0;
+            for (let n = 0; n < NSW; n++) {
+                const d = SW[n], idx = t * NSW + n, r = rewardOf(d); d.life++; B.rew[idx] = r * .1;
+                const done = !d.alive || d.life >= 3000; B.done[idx] = done ? 1 : 0;
+                if (done) { if (!d.alive) { PP.ep += .02 * (d.life / 50 - PP.ep); d.died = 1; } spawn(d); d.flash = d.died ? 20 : 0; d.died = 0; } else na++;
+            }
+            TS.alive = na; TS.step = PP.steps; PP.steps++; PP.t++;
+            if (PP.steps % 1000 === 0) twInit(Math.min(8, 1.5 + .02 * PP.upd));
+            if (PP.t === PP.T) ppoUpdate();
+        }
+        function ppoUpdate() {
+            const nk = TS.yawOn ? 4 : 3, N = NSW, T = PP.T, B = PP.buf, M = T * N, lastV = new Float32Array(N);
+            for (let n = 0; n < N; n++) { sense(SW[n]); netF(PP.critic, 1, ob, c1, c2, vo, false); lastV[n] = vo[0]; }
+            for (let n = 0; n < N; n++) { let gae = 0;                                   // GAE(γ=.99, λ=.95)
+                for (let t = T - 1; t >= 0; t--) { const i = t * N + n, nv = t === T - 1 ? lastV[n] : B.val[i + N], nd = 1 - B.done[i];
+                    gae = B.rew[i] + .99 * nv * nd - B.val[i] + .99 * .95 * nd * gae; B.adv[i] = gae; B.ret[i] = gae + B.val[i]; } }
+            let mean = 0, vr = 0, rs = 0; for (let i = 0; i < M; i++) { mean += B.adv[i]; rs += B.rew[i]; } mean /= M; for (let i = 0; i < M; i++) vr += (B.adv[i] - mean) ** 2; const is = 1 / (Math.sqrt(vr / M) + 1e-8);
+            PP.rew = rs / M * 10;
+            const order = Int32Array.from({ length: M }, (_, i) => i), gA = new Float32Array(NW), gC = new Float32Array(NC), gS = new Float32Array(4), dout = new Float32Array(4), dv = new Float32Array(1), MB = 1024;
+            for (let ep = 0; ep < 4; ep++) {
+                for (let i = M - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)), x = order[i]; order[i] = order[j]; order[j] = x; }
+                for (let s = 0; s + MB <= M; s += MB) {
+                    gA.fill(0); gC.fill(0); gS.fill(0);
+                    for (let b = 0; b < MB; b++) {
+                        const i = order[s + b], o = B.obs.subarray(i * NI, i * NI + NI), A = (B.adv[i] - mean) * is;
+                        netF(PP.actor, 4, o, q1, q2, mu, true);
+                        let lp = 0; for (let k = 0; k < nk; k++) { const sd = Math.exp(PP.ls[k]); lp += -.5 * ((B.act[i * 4 + k] - mu[k]) / sd) ** 2 - PP.ls[k] - .9189; }
+                        const ratio = Math.exp(Math.max(-10, Math.min(10, lp - B.lp[i]))), gL = ((A > 0 && ratio > 1.2) || (A < 0 && ratio < .8)) ? 0 : -A * ratio / MB;
+                        for (let k = 0; k < 4; k++) { if (k >= nk) { dout[k] = 0; continue; } const sd2 = Math.exp(2 * PP.ls[k]), df = B.act[i * 4 + k] - mu[k]; dout[k] = gL * df / sd2 * (1 - mu[k] * mu[k]); gS[k] += gL * (df * df / sd2 - 1); }
+                        netB(PP.actor, gA, 4, o, q1, q2, dout);
+                        netF(PP.critic, 1, o, c1, c2, vo, false); dv[0] = (vo[0] - B.ret[i]) / MB; netB(PP.critic, gC, 1, o, c1, c2, dv);
+                    }
+                    PP.at++; adam(PP.actor, gA, PP.mA, PP.vA, PP.lr); adam(PP.critic, gC, PP.mC, PP.vC, PP.lr); adam(PP.ls, gS, PP.mS, PP.vS, PP.lr);
+                    for (let k = 0; k < 4; k++) PP.ls[k] = Math.max(-2.5, Math.min(.2, PP.ls[k]));
+                }
+            }
+            PP.t = 0; PP.upd++; TS.bestW = PP.actor.slice();
+        }
+        function setMode(m) {
+            if (m === TS.mode) return; TS.mode = m;
+            if (m === 'ppo') {
+                PP.actor = TS.bestW.slice(); const M = PP.T * NSW;
+                PP.buf = { obs: new Float32Array(M * NI), act: new Float32Array(M * 4), lp: new Float32Array(M), val: new Float32Array(M), rew: new Float32Array(M), done: new Uint8Array(M), adv: new Float32Array(M), ret: new Float32Array(M) };
+                PP.t = 0; PP.steps = 0; PP.at = 0; [PP.mA, PP.vA, PP.mC, PP.vC, PP.mS, PP.vS].forEach(a => a.fill(0)); PP.ls.fill(-1.2);
+                twInit(Math.min(8, 1.5 + .02 * PP.upd)); SW.forEach(d => { spawn(d); d.ac = [0, 0, 0, 0]; });
+            } else { SW.forEach((d, i) => { d.w = PP.actor.slice(); if (i > 0) for (let j = 0; j < NW; j++) if (Math.random() < .3) d.w[j] += .03 * gz(); }); newGen(); }
+        }
+        TS.yawOn = true;
+        function setYaw(v) { if (v === TS.yawOn) return; TS.yawOn = v; if (TS.mode === 'ppo') PP.t = 0; else newGen(); }   // 바꾸면 진행 중이던 수집/세대를 새로 시작
+        // PPO-END
+
+        // --- 9c. 100대 스웜 렌더링 / UI (코어는 위 CORE 구간) ---
+        const TRAIN = (() => {
+            let active = false, speedIdx = 1, acc = 0, panelClock = 0; const SPD = [1, 4, 16, 64];
+            const geoA = new THREE.BoxGeometry(.5, .04, .1), geoB = new THREE.BoxGeometry(.5, .04, .1).rotateY(Math.PI / 2);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const armA = new THREE.InstancedMesh(geoA, mat, NSW), armB = new THREE.InstancedMesh(geoB, mat, NSW);
+            const cyl = new THREE.InstancedMesh(new THREE.CylinderGeometry(TP.R, TP.R, TP.H * 2, 24, 1, true),
+                new THREE.MeshBasicMaterial({ color: 0x22d3ee, wireframe: true, transparent: true, opacity: .2 }), NSW);
+            const grp = new THREE.Group(); grp.add(armA, armB, cyl); grp.visible = false; scene.add(grp);
+            const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 9, 0), 3, 0xfacc15, .8, .5); grp.add(arrow);
+            const M = new THREE.Matrix4(), Qt = new THREE.Quaternion(), P3 = new THREE.Vector3(), S3 = new THREE.Vector3(1.6, 1.6, 1.6), C = new THREE.Color();
+            [armA, armB, cyl].forEach(m => { m.frustumCulled = false; });
+            SW.forEach((d, i) => { M.makeTranslation(d.cx, TP.Y0, d.cz); cyl.setMatrixAt(i, M); armA.setColorAt(i, C.setHex(0x34d399)); armB.setColorAt(i, C); });
+            const panel = document.getElementById('sim-panel');
+            function draw() {
+                SW.forEach((d, i) => {
+                    P3.set(d.x, d.y, d.z); Qt.set(d.qx, d.qy, d.qz, d.qw); M.compose(P3, Qt, S3);
+                    armA.setMatrixAt(i, M); armB.setMatrixAt(i, M); C.setHex(d.alive && !(d.flash-- > 0) ? 0x34d399 : 0xef4444); armA.setColorAt(i, C); armB.setColorAt(i, C);
+                });
+                armA.instanceMatrix.needsUpdate = armB.instanceMatrix.needsUpdate = armA.instanceColor.needsUpdate = armB.instanceColor.needsUpdate = true;
+            }
+            const ppoText = () => `[PPO 학습 · 공유 정책 ${NSW}환경]  업데이트 ${PP.upd}회  수집 ${PP.t}/${PP.T}  비행 ${TS.alive}/${NSW}\n` +
+                `최근 평균 생존 ${PP.ep.toFixed(1)}s · 스텝당 보상 ${PP.rew.toFixed(2)} · 탐색 σ=${Math.exp(PP.ls[0]).toFixed(2)}\n` +
+                `바람 ${TW.on ? TW.mean.toFixed(1) : 0}m/s 방향 ${((TW.dir * 57.3 % 360) + 360) % 360 | 0}° (상한 ${Math.min(8, 1.5 + .02 * PP.upd).toFixed(1)}m/s로 점진 증가)  속도 ×${SPD[speedIdx]}\n` +
+                `[N 일반모드 | P GA↔PPO | Y 속도 | G 바람 | K 정책 저장 | L 불러오기]  빨강=방금 이탈 후 재투입`;
+            function frame(dt) {
+                acc += dt * 50 * SPD[speedIdx]; const t0 = performance.now();
+                while (acc >= 1 && performance.now() - t0 < 14) { if (TS.mode === 'ppo') ppoStepAll(); else stepAll(); acc--; } if (acc > 60) acc = 0;
+                draw(); drone.position.set(0, 3, 0); state.pos.set(0, 3, 0);
+                const m = Math.hypot(TW.vx, TW.vz); arrow.visible = TW.on; if (TW.on) { arrow.setDirection(new THREE.Vector3(TW.vx, TW.vy, TW.vz).normalize()); arrow.setLength(Math.max(1, m * .6), .8, .5); }
+                if ((panelClock += dt) > .1) { panelClock = 0;
+                    panel.textContent = TS.mode === 'ppo' ? ppoText() : `[AI 100대 학습 · 유전알고리즘]  세대 ${TS.gen}  생존 ${TS.alive}/${NSW}  t=${(TS.step / 50).toFixed(1)}/${(TS.maxSteps / 50).toFixed(1)}s\n` +
+                        `직전 세대: 최고 생존 ${(TS.bestLife || 0).toFixed(1)}s · 평균 적합도 ${(TS.mean || 0).toFixed(0)} · 종료 시 생존 ${TS.survivors || 0}대\n최근 최고 생존(s): ${TS.hist.join(' ')}\n` +
+                        `바람 ${TW.on ? TW.mean.toFixed(1) : 0}m/s 방향 ${((TW.dir * 57.3 % 360) + 360) % 360 | 0}° (상한 ${Math.min(8, 1.5 + .15 * TS.gen).toFixed(1)}m/s로 점진 증가)  σ=${TS.sigma.toFixed(3)}  속도 ×${SPD[speedIdx]}\n` +
+                        `[N 일반모드 | P GA↔PPO | Y 속도 | G 바람 | K 최고 정책 저장 | L 불러오기]  초록=비행 빨강=이탈`; }
+            }
+            function setActive(v) {
+                active = v; yawBox.style.display = v ? 'flex' : 'none'; grp.visible = v; drone.visible = !v; SIM.show(!v);
+                if (v) { camera.position.set(0, 26, 42); controls.target.set(0, 3, 0); controls.maxDistance = 150; } else { SIM.reset(); }
+                btn.firstElementChild.className = 'fa-solid fa-robot ' + (v ? 'text-emerald-400' : 'text-slate-400');
+            }
+            const btn = btnReset.cloneNode(true); btn.id = 'btn-train'; btn.querySelector('span').textContent = '100대 학습'; btn.firstElementChild.className = 'fa-solid fa-robot text-slate-400';
+            btnReset.parentNode.appendChild(btn); btn.addEventListener('click', () => setActive(!active));
+            const btn2 = btnReset.cloneNode(true); btn2.id = 'btn-ppo'; btn2.querySelector('span').textContent = 'GA 모드'; btn2.firstElementChild.className = 'fa-solid fa-brain text-violet-400'; btnReset.parentNode.appendChild(btn2);
+            const toggleMode = () => { if (!active) return; setMode(TS.mode === 'ppo' ? 'ga' : 'ppo'); btn2.querySelector('span').textContent = TS.mode === 'ppo' ? 'PPO 모드' : 'GA 모드'; };
+            btn2.addEventListener('click', toggleMode);
+            const yawBox = document.createElement('label'); yawBox.className = 'fixed right-4 z-20 glass-panel rounded-xl px-3 py-2 text-xs font-semibold text-slate-200 items-center space-x-2 cursor-pointer'; yawBox.style.cssText = 'top:21rem;display:none';
+            yawBox.innerHTML = '<input type="checkbox" checked> <span>러더(A/D·요) 학습 포함</span>'; document.body.appendChild(yawBox);
+            yawBox.firstElementChild.addEventListener('change', e => setYaw(e.target.checked));
+            const fin = document.createElement('input'); fin.type = 'file'; fin.accept = '.json'; fin.style.display = 'none'; document.body.appendChild(fin);
+            fin.addEventListener('change', () => { const f = fin.files[0]; if (!f) return; const r = new FileReader();
+                r.onload = () => { const w = Float32Array.from(JSON.parse(r.result).bestW); if (w.length !== NW) return alert('정책 크기가 맞지 않아요');
+                    TS.bestW = w.slice(); if (TS.mode === 'ppo') { PP.actor = w.slice(); return; }
+                    SW.forEach((d, i) => { d.w = w.slice(); if (i > 0) for (let j = 0; j < NW; j++) if (Math.random() < .3) d.w[j] += .02 * gz(); }); newGen(); }; r.readAsText(f); fin.value = ''; });
+            window.addEventListener('keydown', e => {
+                if (e.code === 'KeyN') setActive(!active); if (!active) return;
+                if (e.code === 'KeyP') toggleMode(); if (e.code === 'KeyY') speedIdx = (speedIdx + 1) % SPD.length; if (e.code === 'KeyG') TW.on = !TW.on; if (e.code === 'KeyL') fin.click();
+                if (e.code === 'KeyK') { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ gen: TS.gen, bestW: Array.from(TS.bestW) })], { type: 'application/json' }));
+                    a.download = `hover_policy_gen${TS.gen}.json`; a.click(); }
+            });
+            return { frame, get active() { return active; }, TS, SW, TW };
+        })();
+
+        function simFrame(dt) { SIM.frame(dt); }
+
+        // --- 10. Animation & Physics Loop ---
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.1);
+            const time = clock.getElapsedTime();
+
+            if (TRAIN.active) TRAIN.frame(dt); else simFrame(dt);
+
+            // Gimbal Stabilization (Camera remains level regardless of drone tilt)
+            gimbalGroup.rotation.x = -drone.rotation.x * 0.85;
+            gimbalGroup.rotation.z = -drone.rotation.z * 0.85;
+
+            // RPM & Propeller Spin Calculations
+            const speedMagnitude = state.vel.length();
+            const targetRPM = 2500 + 7500 * SIM.thrNorm + speedMagnitude * 100;
+            state.rpm += (targetRPM - state.rpm) * 5 * dt;
+
+            const propSpinSpeed = (state.rpm / 60) * Math.PI * 2 * dt;
+            propBlades.forEach((blade, idx) => {
+                const dir = idx % 2 === 0 ? 1 : -1;
+                blade.rotation.y += propSpinSpeed * dir;
+            });
+
+            // Adjust motion blur disc opacity dynamically with RPM
+            const blurOpacity = THREE.MathUtils.clamp((state.rpm - 3000) / 6000, 0.15, 0.55);
+            propBlurs.forEach(blur => blur.material.opacity = blurOpacity);
+
+            // Sound Sync
+            updateAudio(state.rpm);
+
+            // Camera Tracking Modes
+            if (state.camMode === 'follow') {
+                const camOffset = new THREE.Vector3(0, 0.8, 2.6).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.rot.y);
+                const targetCamPos = state.pos.clone().add(camOffset);
+                camera.position.lerp(targetCamPos, 0.08);
+                controls.target.lerp(state.pos.clone().add(new THREE.Vector3(0, 0.2, 0)), 0.1);
+            } else {
+                // Orbit mode target moves smooth with drone
+                controls.target.lerp(drone.position, 0.1);
+            }
+
+            controls.update();
+            updateHUD(speedMagnitude);
+
+            renderer.render(scene, camera);
+        }
+
+        // --- 11. Window Resize Handler ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start Simulator
+        animate();
+
+    </script>
+</body>
+</html>
