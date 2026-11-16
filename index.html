@@ -983,7 +983,7 @@
 
 
         // CORE-BEGIN  (100대 스웜: 물리 + 센서 + 신경망 정책 + 유전알고리즘, 렌더링과 무관)
-        const NSW = 100, HID = 16, NI = 15, NO = 4, NW = NI * HID + HID + HID * HID + HID + HID * NO + NO;
+        const NSW = 100, HID = 16, NI = 22, NO = 4, NW = NI * HID + HID + HID * HID + HID + HID * NO + NO;
         const TP = { m: 1.2, g: 9.81, Tmax: 26, Ix: .015, Iy: .025, Iz: .015, kd: .06, kl: .1, mt: .03, h: .004, R: 1.0, H: .8, Y0: 3, tau: [.6, .3, .6] };
         const gz = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(6.2832 * Math.random()); };
         const ouu = (x, t, sd, h) => x - x / t * h + sd * Math.sqrt(2 * h / t) * gz();
@@ -1009,9 +1009,12 @@
         }
         const SW = [];
         for (let i = 0; i < NSW; i++) SW.push({ cx: ((i % 10) - 4.5) * 3, cz: (((i / 10) | 0) - 4.5) * 3, w: randNet() });
-        const TS = { gen: 0, step: 0, maxSteps: 500, best: 0, mean: 0, alive: NSW, hist: [], bestW: SW[0].w.slice(), sigma: .15 };
-        function spawn(d) {
-            d.x = d.cx; d.y = TP.Y0; d.z = d.cz; d.vx = (Math.random() - .5) * .6; d.vy = 0; d.vz = (Math.random() - .5) * .6;
+        const TS = { task: 'hover', gen: 0, step: 0, maxSteps: 500, best: 0, mean: 0, alive: NSW, hist: [], bestW: SW[0].w.slice(), sigma: .15 };
+        function spawn(d, s0) {
+            if (TS.task === 'hover') { d.x = d.cx; d.y = TP.Y0; d.z = d.cz; d.vx = (Math.random() - .5) * .6; d.vy = 0; d.vz = (Math.random() - .5) * .6; }
+            else { const sr = s0 === undefined ? Math.random() * CRS.NT : s0; d.sr = sr; d.si = Math.floor(sr) % CRS.NT; crsAt(sr);
+                d.x = cp[0] + .1 * (Math.random() - .5); d.y = cp[1] + .1 * (Math.random() - .5); d.z = cp[2] + .1 * (Math.random() - .5);
+                d.vx = CRS.vref * ct[0] + (Math.random() - .5) * .6; d.vy = CRS.vref * ct[1] + (Math.random() - .5) * .6; d.vz = CRS.vref * ct[2] + (Math.random() - .5) * .6; }
             const ax = (Math.random() - .5) * .1, az = (Math.random() - .5) * .1, n = Math.hypot(1, ax, az);
             d.qw = 1 / n; d.qx = ax / n; d.qy = 0; d.qz = az / n; d.wx = d.wy = d.wz = 0;
             d.T = d.cT = TP.m * TP.g; d.tx = d.ty = d.tz = d.mx = d.my = d.mz = 0; d.fx = 0; d.fy = TP.g; d.fz = 0; d.rc = [0, 0, 0];
@@ -1020,7 +1023,7 @@
         }
         function newGen() {
             TS.gen++; TS.step = 0; TS.maxSteps = Math.round(Math.min(60, 10 + .5 * TS.gen) * 50);
-            twInit(Math.min(8, 1.5 + .15 * TS.gen)); for (const d of SW) spawn(d);   // 풍속 상한은 세대와 함께 점진 증가
+            twInit(Math.min(8, 1.5 + .15 * TS.gen)); const sh = Math.random(); SW.forEach((d, i) => spawn(d, TS.task === 'hover' ? undefined : ((i / NSW + sh) % 1) * CRS.NT));   // 풍속 상한은 세대와 함께 점진 증가
         }
         function phys(d) {
             const { m, g, h, Ix, Iy, Iz } = TP, k = Math.min(1, h / TP.mt);
@@ -1049,32 +1052,33 @@
                 const nw = w0 * dw - x * dx - y * dy - z * dz, nx = w0 * dx + dw * x + y * dz - z * dy, ny = w0 * dy + dw * y + z * dx - x * dz, nz = w0 * dz + dw * z + x * dy - y * dx;
                 const n = 1 / Math.sqrt(nw * nw + nx * nx + ny * ny + nz * nz); d.qw = nw * n; d.qx = nx * n; d.qy = ny * n; d.qz = nz * n;
             }
-            if (Math.hypot(d.x - d.cx, d.z - d.cz) > TP.R || Math.abs(d.y - TP.Y0) > TP.H) d.alive = false;
+            if (TS.task === 'hover' && (Math.hypot(d.x - d.cx, d.z - d.cz) > TP.R || Math.abs(d.y - TP.Y0) > TP.H)) d.alive = false;
         }
-        function sense(d) {   // 노이즈 낀 센서 → 15차원 관측 (참값 미사용)
+        function sense(d) {   // 노이즈 낀 센서 → 22차원 관측 (기준점 대비 상대값; 호버링=고정점, 주행=코스 기준점)
             const w0 = d.qw, x = d.qx, y = d.qy, z = d.qz, o = ob;
             const bx = (v1, v2, v3) => (1 - 2 * (y * y + z * z)) * v1 + 2 * (x * y + w0 * z) * v2 + 2 * (x * z - w0 * y) * v3;
             const by = (v1, v2, v3) => 2 * (x * y - w0 * z) * v1 + (1 - 2 * (x * x + z * z)) * v2 + 2 * (y * z + w0 * x) * v3;
             const bz = (v1, v2, v3) => 2 * (x * z + w0 * y) * v1 + 2 * (y * z - w0 * x) * v2 + (1 - 2 * (x * x + y * y)) * v3;
-            o[0] = (d.wx + d.bg[0] + .003 * gz()) / 2; o[1] = (d.wy + d.bg[1] + .003 * gz()) / 2; o[2] = (d.wz + d.bg[2] + .003 * gz()) / 2;       // gyro
-            o[3] = (bx(d.fx, d.fy, d.fz) + d.ba[0] + .05 * gz()) / 2; o[4] = (by(d.fx, d.fy, d.fz) + d.ba[1] + .05 * gz()) / 10; o[5] = (bz(d.fx, d.fy, d.fz) + d.ba[2] + .05 * gz()) / 2; // accel
-            o[6] = (d.x - d.cx + .015 * gz()) / TP.R; o[7] = (d.y - TP.Y0 + .02 * gz()) / TP.H; o[8] = (d.z - d.cz + .015 * gz()) / TP.R;                  // RTK
-            o[9] = (d.vx + .05 * gz()) / 1.5; o[10] = (d.vz + .05 * gz()) / 1.5;      // 광류+AHRS 융합 수평속도(월드)
-            for (let i = 0; i < 4; i++) o[11 + i] = d.la[i];
+            o[0] = (d.wx + d.bg[0] + .003 * gz()) / 2; o[1] = (d.wy + d.bg[1] + .003 * gz()) / 2; o[2] = (d.wz + d.bg[2] + .003 * gz()) / 2;
+            o[3] = (bx(d.fx, d.fy, d.fz) + d.ba[0] + .05 * gz()) / 2; o[4] = (by(d.fx, d.fy, d.fz) + d.ba[1] + .05 * gz()) / 10; o[5] = (bz(d.fx, d.fy, d.fz) + d.ba[2] + .05 * gz()) / 2;
+            let rx, ry, rz, sx = TP.R, sy = TP.H, sz = TP.R; d.rvx = d.rvy = d.rvz = d.rax = d.ray = d.raz = 0;
+            if (TS.task === 'hover') { rx = d.cx; ry = TP.Y0; rz = d.cz; }
+            else { crsAt(d.sr); rx = cp[0]; ry = cp[1]; rz = cp[2]; const v = CRS.vref, a = v * v; d.rvx = v * ct[0]; d.rvy = v * ct[1]; d.rvz = v * ct[2]; d.rax = a * ck[0]; d.ray = a * ck[1]; d.raz = a * ck[2]; sx = sy = sz = CRS.R; }
+            o[6] = (d.x - rx + .015 * gz()) / sx; o[7] = (d.y - ry + .02 * gz()) / sy; o[8] = (d.z - rz + .015 * gz()) / sz;
+            o[9] = (d.vx - d.rvx + .05 * gz()) / 1.5; o[10] = (d.vy - d.rvy + .05 * gz()) / 1.5; o[11] = (d.vz - d.rvz + .05 * gz()) / 1.5;
+            o[12] = d.rvx / 5; o[13] = d.rvy / 5; o[14] = d.rvz / 5; o[15] = d.rax / 3; o[16] = d.ray / 3; o[17] = d.raz / 3;
+            for (let i = 0; i < 4; i++) o[18 + i] = d.la[i];
         }
         function stepAll() {
             for (const d of SW) {
                 d.run = d.alive; if (!d.alive) continue;
-                sense(d); fwd(d.w, ob, ao); if (!TS.yawOn) ao[3] = 0; d.ac = [ao[0], ao[1], ao[2], ao[3]];
-                d.cT = Math.min(TP.Tmax, Math.max(0, TP.m * TP.g * (1 + 1.2 * ao[0]))); d.rc = [ao[1], ao[2], ao[3] * 2];
+                sense(d); fwd(d.w, ob, ao); if (!TS.yawOn) ao[3] = 0; act(d, ao[0], ao[1], ao[2], ao[3]);
             }
             for (let s = 0; s < 5; s++) { twStep(TP.h); for (const d of SW) if (d.alive) phys(d); }
             let na = 0;
             for (const d of SW) {
                 if (!d.run) continue;
-                const dr = Math.hypot(d.x - d.cx, d.z - d.cz) / TP.R, dy = Math.abs(d.y - TP.Y0) / TP.H, a = d.ac;
-                let r = 1 - .5 * dr - .3 * dy - .02 * Math.hypot(d.wx, d.wy, d.wz) - .05 * (Math.abs(a[0] - d.la[0]) + Math.abs(a[1] - d.la[1]) + Math.abs(a[2] - d.la[2]) + Math.abs(a[3] - d.la[3]));
-                if (!d.alive) r = -10; d.fit += r; d.la = a; d.life++; if (d.alive) na++;
+                const r = rewardOf(d); d.fit += r; d.life++; if (d.alive) na++;
             }
             TS.step++; TS.alive = na;
             if (na === 0 || TS.step >= TS.maxSteps) evolve();
@@ -1097,6 +1101,62 @@
         }
         newGen();
         // CORE-END
+        // COURSE-BEGIN  (중심선 + 단면 다각형/원형 튜브 코스, 주행 과제용 기준궤적/피드포워드)
+        const CRS = { NT: 480, sides: 8, R: 3, vref: 4, L: 0, ds: 1, P: null, T: null, K: null, N: null, B: null, ec: [], es: [], ap: 3, label: '클래식' };
+        const cp = [0, 0, 0], ct = [0, 0, 0], ck = [0, 0, 0], FF = [0, 0, 0];
+        function crsClassic() { const a = []; for (let i = 0; i < 12; i++) { const t = i / 12 * 6.2832; a.push([(Math.sin(t) * 180 + Math.sin(3 * t) * 12) * .25, Math.sin(2 * t) * 60 * .25, (Math.cos(t) * 180 + Math.cos(2 * t) * 20) * .25]); } return a; }
+        function crsRandom(seed) {
+            let a = seed | 0; const rnd = () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+            const n = 10 + Math.floor(rnd() * 5), baseR = 150 + rnd() * 70, ampY = 30 + rnd() * 60, f1 = 1 + Math.floor(rnd() * 3), f2 = 2 + Math.floor(rnd() * 3), ph1 = rnd() * 6.2832, ph2 = rnd() * 6.2832, sx = .8 + rnd() * .5, sz = .8 + rnd() * .5, step = 6.2832 / n, raw = [];
+            for (let i = 0; i < n; i++) { const ang = i * step + (rnd() - .5) * step * .5, r = baseR * (1 + (rnd() - .5) * .4), y = Math.sin(ang * f1 + ph1) * ampY + Math.sin(ang * f2 + ph2) * ampY * .4 + (rnd() - .5) * 20; raw.push([Math.sin(ang) * r * sx, y, Math.cos(ang) * r * sz]); }
+            return raw.map((p, i) => { const q = raw[(i + n - 1) % n], b = raw[(i + 1) % n]; return [0, 1, 2].map(c => (.25 * q[c] + .5 * p[c] + .25 * b[c]) * .2); });
+        }
+        function crsBuild(ctrl) {   // 폐곡선 Catmull-Rom → 호길이 균등 480점 테이블(위치/접선/곡률벡터/단면 기저)
+            const n = ctrl.length, M = 40, dense = [];
+            for (let i = 0; i < n; i++) { const p0 = ctrl[(i + n - 1) % n], p1 = ctrl[i], p2 = ctrl[(i + 1) % n], p3 = ctrl[(i + 2) % n];
+                for (let j = 0; j < M; j++) { const t = j / M, t2 = t * t, t3 = t2 * t; dense.push([0, 1, 2].map(c => .5 * (2 * p1[c] + (-p0[c] + p2[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t2 + (-p0[c] + 3 * p1[c] - 3 * p2[c] + p3[c]) * t3))); } }
+            const D = dense.length, cum = new Float64Array(D + 1);
+            for (let i = 0; i < D; i++) { const a = dense[i], b = dense[(i + 1) % D]; cum[i + 1] = cum[i] + Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); }
+            const NT = CRS.NT, L = cum[D], ds = L / NT, P = new Float32Array(NT * 3); let k = 0;
+            for (let i = 0; i < NT; i++) { const tg = i * ds; while (cum[k + 1] < tg) k++; const f = (tg - cum[k]) / (cum[k + 1] - cum[k]), a = dense[k], b = dense[(k + 1) % D]; for (let c = 0; c < 3; c++) P[i * 3 + c] = a[c] + (b[c] - a[c]) * f; }
+            const T = new Float32Array(NT * 3), K = new Float32Array(NT * 3), Nn = new Float32Array(NT * 3), Bb = new Float32Array(NT * 3);
+            for (let i = 0; i < NT; i++) { const a = (i + NT - 1) % NT, b = (i + 1) % NT, x = P[b * 3] - P[a * 3], y = P[b * 3 + 1] - P[a * 3 + 1], z = P[b * 3 + 2] - P[a * 3 + 2], l = Math.hypot(x, y, z); T[i * 3] = x / l; T[i * 3 + 1] = y / l; T[i * 3 + 2] = z / l; }
+            for (let i = 0; i < NT; i++) { const a = (i + NT - 1) % NT, b = (i + 1) % NT;
+                for (let c = 0; c < 3; c++) K[i * 3 + c] = (T[b * 3 + c] - T[a * 3 + c]) / (2 * ds);
+                const tx = T[i * 3], ty = T[i * 3 + 1], tz = T[i * 3 + 2], l = Math.hypot(tz, tx), nx = tz / l, nz = -tx / l;   // N = normalize(Y × T), B = T × N
+                Nn[i * 3] = nx; Nn[i * 3 + 1] = 0; Nn[i * 3 + 2] = nz; Bb[i * 3] = ty * nz; Bb[i * 3 + 1] = tz * nx - tx * nz; Bb[i * 3 + 2] = -ty * nx; }
+            Object.assign(CRS, { P, T, K, N: Nn, B: Bb, L, ds });
+            let km = 1e-3; for (let i = 0; i < NT; i++) km = Math.max(km, Math.hypot(K[i * 3], K[i * 3 + 1], K[i * 3 + 2]));
+            CRS.kmax = km; CRS.vref = Math.max(1.5, Math.min(5, Math.sqrt(3 / km)));   // 최대 구심가속 ≈3m/s² 이하가 되도록 기준속도 자동 설정
+        }
+        function crsShape(sides) { CRS.sides = sides; CRS.ec = []; CRS.es = []; if (sides > 0) { for (let k = 0; k < sides; k++) { const f = (k + .5) * 6.2832 / sides; CRS.ec.push(Math.cos(f)); CRS.es.push(Math.sin(f)); } CRS.ap = CRS.R * Math.cos(Math.PI / sides); } }
+        function crsAt(idx) {   // 선형보간: 위치 cp, 접선 ct, 곡률벡터 ck
+            const NT = CRS.NT, i = Math.floor(idx), f = idx - i, i0 = ((i % NT) + NT) % NT, i1 = (i0 + 1) % NT;
+            for (let c = 0; c < 3; c++) { cp[c] = CRS.P[i0 * 3 + c] * (1 - f) + CRS.P[i1 * 3 + c] * f; ct[c] = CRS.T[i0 * 3 + c] * (1 - f) + CRS.T[i1 * 3 + c] * f; ck[c] = CRS.K[i0 * 3 + c] * (1 - f) + CRS.K[i1 * 3 + c] * f; }
+        }
+        function crsInside(d) {   // 가장 가까운 중심선 점의 단면에서 다각형/원 내부인지
+            const NT = CRS.NT, P = CRS.P; let best = 1e18, bi = d.si;
+            for (let o = -8; o <= 8; o++) { const i = ((d.si + o) % NT + NT) % NT, dx = d.x - P[i * 3], dy = d.y - P[i * 3 + 1], dz = d.z - P[i * 3 + 2], q = dx * dx + dy * dy + dz * dz; if (q < best) { best = q; bi = i; } }
+            d.si = bi; const i3 = bi * 3, ox = d.x - P[i3], oy = d.y - P[i3 + 1], oz = d.z - P[i3 + 2];
+            const u = ox * CRS.N[i3] + oy * CRS.N[i3 + 1] + oz * CRS.N[i3 + 2], v = ox * CRS.B[i3] + oy * CRS.B[i3 + 1] + oz * CRS.B[i3 + 2];
+            if (CRS.sides === 0) return u * u + v * v <= CRS.R * CRS.R;
+            for (let k = 0; k < CRS.sides; k++) if (u * CRS.ec[k] + v * CRS.es[k] > CRS.ap) return false; return true;
+        }
+        function ff(d) {   // "바람 없다는 가정"으로 계산된 코스 조종값: 구심가속도 + 중력 + 항력 보상 → [추력, 기울기x, 기울기z]
+            const sp = Math.hypot(d.rvx, d.rvy, d.rvz), c = (TP.kd * sp + TP.kl) / TP.m, Fx = d.rax + c * d.rvx, Fy = d.ray + TP.g + c * d.rvy, Fz = d.raz + c * d.rvz;
+            FF[0] = (Math.hypot(Fx, Fy, Fz) / TP.g - 1) / 1.2; FF[1] = Fx / Fy / .483; FF[2] = Fz / Fy / .483;
+        }
+        function act(d, x0, x1, x2, x3) {   // 정책 출력 → 최종 조종. follow 과제는 (고정 조종값 + 0.5×정책 보정)
+            if (TS.task === 'follow') { ff(d); x0 = FF[0] + .5 * x0; x1 = FF[1] + .5 * x1; x2 = FF[2] + .5 * x2; x3 = .5 * x3; }
+            const c = v => Math.max(-1, Math.min(1, v)); x0 = c(x0); x1 = c(x1); x2 = c(x2); x3 = c(x3);
+            d.ac = [x0, x1, x2, x3]; d.cT = Math.min(TP.Tmax, Math.max(0, TP.m * TP.g * (1 + 1.2 * x0))); d.rc = [x1, x2, x3 * 2];
+        }
+        function restartTask() {   // 과제/코스가 바뀌면 진행 중이던 세대·수집분을 새로 시작 (정책은 유지)
+            if (TS.mode === 'ppo') { twInit(Math.min(8, 1.5 + .02 * PP.upd)); PP.t = 0; SW.forEach(d => { spawn(d); d.ac = [0, 0, 0, 0]; }); } else newGen();
+        }
+        function setTask(t) { if (t === TS.task) return; TS.task = t; TS.hist = []; restartTask(); }
+        crsBuild(crsClassic()); crsShape(8);
+        // COURSE-END
         // PPO-BEGIN  (공유 정책 1개 + 100개 환경 병렬 수집, 수동 역전파, Adam)
         TS.mode = 'ga';
         const NC = NI * HID + HID + HID * HID + HID + HID + 1;
@@ -1124,8 +1184,15 @@
             for (let i = 0; i < p.length; i++) { const gi = g[i] * sc; m[i] = .9 * m[i] + .1 * gi; v[i] = .999 * v[i] + .001 * gi * gi; p[i] -= lr * (m[i] / c1_) / (Math.sqrt(v[i] / c2_) + 1e-8); }
         }
         function rewardOf(d) {
-            const a = d.ac, dr = Math.hypot(d.x - d.cx, d.z - d.cz) / TP.R, dy = Math.abs(d.y - TP.Y0) / TP.H;
-            let r = 1 - .5 * dr - .3 * dy - .02 * Math.hypot(d.wx, d.wy, d.wz) - .05 * (Math.abs(a[0] - d.la[0]) + Math.abs(a[1] - d.la[1]) + Math.abs(a[2] - d.la[2]) + Math.abs(a[3] - d.la[3]));
+            const a = d.ac; let r;
+            if (TS.task === 'hover') { const dr = Math.hypot(d.x - d.cx, d.z - d.cz) / TP.R, dy = Math.abs(d.y - TP.Y0) / TP.H; r = 1 - .5 * dr - .3 * dy; }
+            else {   // 주행: 기준점(코스를 일정 속도로 따라가는 점) 추종 + 튜브 이탈/8m 이상 뒤처짐 시 사망
+                d.sr = (d.sr + CRS.vref * .02 / CRS.ds) % CRS.NT; crsAt(d.sr);
+                const ex = d.x - cp[0], ey = d.y - cp[1], ez = d.z - cp[2], al = ex * ct[0] + ey * ct[1] + ez * ct[2];
+                if (!crsInside(d) || Math.abs(al) > 8) d.alive = false;
+                r = 1 - .5 * Math.min(2, Math.hypot(ex, ey, ez) / CRS.R);
+            }
+            r -= .02 * Math.hypot(d.wx, d.wy, d.wz) + .05 * (Math.abs(a[0] - d.la[0]) + Math.abs(a[1] - d.la[1]) + Math.abs(a[2] - d.la[2]) + Math.abs(a[3] - d.la[3]));
             if (!d.alive) r = -10; d.la = a; return r;
         }
         function ppoStepAll() {
@@ -1134,8 +1201,7 @@
                 const d = SW[n], idx = t * NSW + n; sense(d); B.obs.set(ob, idx * NI);
                 netF(PP.actor, 4, ob, q1, q2, mu, true); netF(PP.critic, 1, ob, c1, c2, vo, false);
                 let lp = 0; for (let k = 0; k < 4; k++) { const a = mu[k] + sd[k] * gz(); B.act[idx * 4 + k] = a; if (k < nk) lp += -.5 * ((a - mu[k]) / sd[k]) ** 2 - PP.ls[k] - .9189; ao[k] = Math.max(-1, Math.min(1, a)); }
-                if (!TS.yawOn) ao[3] = 0; B.lp[idx] = lp; B.val[idx] = vo[0]; d.ac = [ao[0], ao[1], ao[2], ao[3]];
-                d.cT = Math.min(TP.Tmax, Math.max(0, TP.m * TP.g * (1 + 1.2 * ao[0]))); d.rc = [ao[1], ao[2], ao[3] * 2];
+                if (!TS.yawOn) ao[3] = 0; B.lp[idx] = lp; B.val[idx] = vo[0]; act(d, ao[0], ao[1], ao[2], ao[3]);
             }
             for (let s = 0; s < 5; s++) { twStep(TP.h); for (const d of SW) if (d.alive) phys(d); }
             let na = 0;
@@ -1199,18 +1265,37 @@
                 new THREE.MeshBasicMaterial({ color: 0x22d3ee, wireframe: true, transparent: true, opacity: .2 }), NSW);
             const grp = new THREE.Group(); grp.add(armA, armB, cyl); grp.visible = false; scene.add(grp);
             const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 9, 0), 3, 0xfacc15, .8, .5); grp.add(arrow);
+            let tubeG = null;
+            function buildTube() {   // 물리 판정과 같은 테이블/단면(원형 or n각형)으로 와이어프레임 생성
+                if (tubeG) { grp.remove(tubeG); tubeG.geometry.dispose(); tubeG.material.dispose(); }
+                const n = CRS.sides || 32, step = 4, pos = [], ring = [];
+                for (let i = 0; i < CRS.NT; i += step) { const v = [], i3 = i * 3;
+                    for (let k = 0; k < n; k++) { const th = 6.2832 * k / n, c = Math.cos(th) * CRS.R, sn = Math.sin(th) * CRS.R;
+                        v.push([CRS.P[i3] + c * CRS.N[i3] + sn * CRS.B[i3], CRS.P[i3 + 1] + c * CRS.N[i3 + 1] + sn * CRS.B[i3 + 1], CRS.P[i3 + 2] + c * CRS.N[i3 + 2] + sn * CRS.B[i3 + 2]]); }
+                    ring.push(v); }
+                ring.forEach((v, r) => { const nx = ring[(r + 1) % ring.length]; for (let k = 0; k < n; k++) { pos.push(...v[k], ...v[(k + 1) % n], ...v[k], ...nx[k]); } });
+                const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                tubeG = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: .45 })); grp.add(tubeG);
+            }
+            buildTube();
+            function applyView() {
+                const h = TS.task === 'hover'; cyl.visible = h; tubeG.visible = !h; arrow.position.set(0, h ? 9 : 28, 0);
+                if (h) { camera.position.set(0, 26, 42); controls.target.set(0, 3, 0); } else { camera.position.set(0, 120, 150); controls.target.set(0, 0, 0); }
+            }
             const M = new THREE.Matrix4(), Qt = new THREE.Quaternion(), P3 = new THREE.Vector3(), S3 = new THREE.Vector3(1.6, 1.6, 1.6), C = new THREE.Color();
             [armA, armB, cyl].forEach(m => { m.frustumCulled = false; });
             SW.forEach((d, i) => { M.makeTranslation(d.cx, TP.Y0, d.cz); cyl.setMatrixAt(i, M); armA.setColorAt(i, C.setHex(0x34d399)); armB.setColorAt(i, C); });
             const panel = document.getElementById('sim-panel');
             function draw() {
+                S3.setScalar(TS.task === 'hover' ? 1.6 : 4);   // 주행 코스는 멀리서 보이도록 기체를 크게 표시
                 SW.forEach((d, i) => {
                     P3.set(d.x, d.y, d.z); Qt.set(d.qx, d.qy, d.qz, d.qw); M.compose(P3, Qt, S3);
                     armA.setMatrixAt(i, M); armB.setMatrixAt(i, M); C.setHex(d.alive && !(d.flash-- > 0) ? 0x34d399 : 0xef4444); armA.setColorAt(i, C); armB.setColorAt(i, C);
                 });
                 armA.instanceMatrix.needsUpdate = armB.instanceMatrix.needsUpdate = armA.instanceColor.needsUpdate = armB.instanceColor.needsUpdate = true;
             }
-            const ppoText = () => `[PPO 학습 · 공유 정책 ${NSW}환경]  업데이트 ${PP.upd}회  수집 ${PP.t}/${PP.T}  비행 ${TS.alive}/${NSW}\n` +
+            const taskLabel = () => ({ hover: '호버링', follow: '주행: 조종 고정 + 바람 저항', drive: '주행: 조종 + 바람 저항' })[TS.task];
+            const ppoText = () => `[PPO · ${taskLabel()}]  업데이트 ${PP.upd}회  수집 ${PP.t}/${PP.T}  비행 ${TS.alive}/${NSW}\n` +
                 `최근 평균 생존 ${PP.ep.toFixed(1)}s · 스텝당 보상 ${PP.rew.toFixed(2)} · 탐색 σ=${Math.exp(PP.ls[0]).toFixed(2)}\n` +
                 `바람 ${TW.on ? TW.mean.toFixed(1) : 0}m/s 방향 ${((TW.dir * 57.3 % 360) + 360) % 360 | 0}° (상한 ${Math.min(8, 1.5 + .02 * PP.upd).toFixed(1)}m/s로 점진 증가)  속도 ×${SPD[speedIdx]}\n` +
                 `[N 일반모드 | P GA↔PPO | Y 속도 | G 바람 | K 정책 저장 | L 불러오기]  빨강=방금 이탈 후 재투입`;
@@ -1220,14 +1305,14 @@
                 draw(); drone.position.set(0, 3, 0); state.pos.set(0, 3, 0);
                 const m = Math.hypot(TW.vx, TW.vz); arrow.visible = TW.on; if (TW.on) { arrow.setDirection(new THREE.Vector3(TW.vx, TW.vy, TW.vz).normalize()); arrow.setLength(Math.max(1, m * .6), .8, .5); }
                 if ((panelClock += dt) > .1) { panelClock = 0;
-                    panel.textContent = TS.mode === 'ppo' ? ppoText() : `[AI 100대 학습 · 유전알고리즘]  세대 ${TS.gen}  생존 ${TS.alive}/${NSW}  t=${(TS.step / 50).toFixed(1)}/${(TS.maxSteps / 50).toFixed(1)}s\n` +
+                    panel.textContent = TS.mode === 'ppo' ? ppoText() : `[GA · ${taskLabel()}]  세대 ${TS.gen}  생존 ${TS.alive}/${NSW}  t=${(TS.step / 50).toFixed(1)}/${(TS.maxSteps / 50).toFixed(1)}s\n` +
                         `직전 세대: 최고 생존 ${(TS.bestLife || 0).toFixed(1)}s · 평균 적합도 ${(TS.mean || 0).toFixed(0)} · 종료 시 생존 ${TS.survivors || 0}대\n최근 최고 생존(s): ${TS.hist.join(' ')}\n` +
                         `바람 ${TW.on ? TW.mean.toFixed(1) : 0}m/s 방향 ${((TW.dir * 57.3 % 360) + 360) % 360 | 0}° (상한 ${Math.min(8, 1.5 + .15 * TS.gen).toFixed(1)}m/s로 점진 증가)  σ=${TS.sigma.toFixed(3)}  속도 ×${SPD[speedIdx]}\n` +
                         `[N 일반모드 | P GA↔PPO | Y 속도 | G 바람 | K 최고 정책 저장 | L 불러오기]  초록=비행 빨강=이탈`; }
             }
             function setActive(v) {
-                active = v; yawBox.style.display = v ? 'flex' : 'none'; grp.visible = v; drone.visible = !v; SIM.show(!v);
-                if (v) { camera.position.set(0, 26, 42); controls.target.set(0, 3, 0); controls.maxDistance = 150; } else { SIM.reset(); }
+                active = v; ctl.style.display = v ? 'block' : 'none'; yawBox.style.display = v ? 'flex' : 'none'; grp.visible = v; drone.visible = !v; SIM.show(!v);
+                if (v) { applyView(); controls.maxDistance = 300; } else { SIM.reset(); }
                 btn.firstElementChild.className = 'fa-solid fa-robot ' + (v ? 'text-emerald-400' : 'text-slate-400');
             }
             const btn = btnReset.cloneNode(true); btn.id = 'btn-train'; btn.querySelector('span').textContent = '100대 학습'; btn.firstElementChild.className = 'fa-solid fa-robot text-slate-400';
@@ -1238,6 +1323,17 @@
             const yawBox = document.createElement('label'); yawBox.className = 'fixed right-4 z-20 glass-panel rounded-xl px-3 py-2 text-xs font-semibold text-slate-200 items-center space-x-2 cursor-pointer'; yawBox.style.cssText = 'top:21rem;display:none';
             yawBox.innerHTML = '<input type="checkbox" checked> <span>러더(A/D·요) 학습 포함</span>'; document.body.appendChild(yawBox);
             yawBox.firstElementChild.addEventListener('change', e => setYaw(e.target.checked));
+            const ctl = document.createElement('div'); ctl.className = 'fixed right-4 z-20 glass-panel rounded-xl p-2 text-xs text-slate-200'; ctl.style.cssText = 'top:24.5rem;display:none;width:16rem';
+            const selCls = 'w-full mb-2 bg-slate-950 border border-slate-700 rounded p-1.5';
+            ctl.innerHTML = `<select id="sel-task" class="${selCls}"><option value="hover">① 호버링 (제자리 + 바람 저항)</option><option value="follow">② 주행: 조종 고정 + 바람 저항만 학습</option><option value="drive">③ 주행: 조종 + 바람 저항 모두 학습</option></select>` +
+                `<select id="sel-shape" class="${selCls}"><option value="0">원형 튜브</option><option value="4">사각형 튜브</option><option value="6">육각형 튜브</option><option value="8" selected>팔각형 튜브</option></select>` +
+                `<button id="btn-course" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded p-1.5 font-semibold text-indigo-300">🔀 코스 새로 생성</button><div id="course-info" class="mt-1 text-[10px] text-slate-400 text-center"></div>`;
+            document.body.appendChild(ctl);
+            const info = () => { document.getElementById('course-info').textContent = `${CRS.label} · 길이 ${CRS.L.toFixed(0)}m · 기준속도 ${CRS.vref.toFixed(1)}m/s · 튜브 반지름 ${CRS.R}m`; };
+            document.getElementById('sel-task').addEventListener('change', e => { setTask(e.target.value); applyView(); });
+            document.getElementById('sel-shape').addEventListener('change', e => { crsShape(+e.target.value); buildTube(); restartTask(); });
+            document.getElementById('btn-course').addEventListener('click', () => { const seed = (Math.random() * 1e6) | 0; crsBuild(crsRandom(seed)); CRS.label = `랜덤 #${seed}`; buildTube(); info(); restartTask(); if (TS.task !== 'hover') applyView(); });
+            info();
             const fin = document.createElement('input'); fin.type = 'file'; fin.accept = '.json'; fin.style.display = 'none'; document.body.appendChild(fin);
             fin.addEventListener('change', () => { const f = fin.files[0]; if (!f) return; const r = new FileReader();
                 r.onload = () => { const w = Float32Array.from(JSON.parse(r.result).bestW); if (w.length !== NW) return alert('정책 크기가 맞지 않아요');
